@@ -14,6 +14,8 @@ from keras.preprocessing.image import ImageDataGenerator
 import keras.backend as K
 import tensorflow as tf
 
+from utils import find_files
+
 POSSIBLE_MODELS = [
   'vgg16', 
   'resnet50', 
@@ -29,10 +31,7 @@ def grouper(iterable, n, fillvalue=None):
 def generate_images(directory, batch_size=10, resize=(299, 299), data_format='channel_first'):
   
   pattern = '^image_[0-9]{5}\.(png|jpg)$'
-
-  image_filenames = os.listdir(directory)
-  image_filenames = [f for f in image_filenames if re.search(pattern, f)]
-  image_filenames = sorted([os.path.join(directory, f) for f in image_filenames])
+  image_filenames = find_files(directory, pattern)
 
   def generator():
     for filenames_batch in grouper(image_filenames, batch_size):
@@ -60,7 +59,7 @@ def preprocess_image(img, data_format, new_height, new_width):
   resized_width = int(new_width * (img.shape[1] / float(img.shape[0])))
   
   img = scipy.misc.imresize(img, (resized_height, resized_width))
-  img = center_crop(img, new_heig ht, new_width)
+  img = center_crop(img, new_height, new_width)
   img = scale_img(img)
   img = np.transpose(img, (2, 0, 1)) if data_format == 'channels_first' else img
   return img 
