@@ -18,4 +18,5 @@ python train_simple_cnn_regressor.py \
 	-l "${LABELS[@]}" \
 	-f "${FEATURES[@]}" \
 	-o "${OUTPUT_DIR}" \
-	-i 200
+	-i 200 \
+  -m naive-w

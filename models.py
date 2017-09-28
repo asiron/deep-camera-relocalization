@@ -1,21 +1,22 @@
-import tensorflow as tf
 import keras.backend as K
-
-from itertools import izip
-from functools32 import lru_cache
+import tensorflow as tf
 
 from keras.models import Sequential
 from keras.layers import Dropout, Dense, Lambda
 from keras.optimizers import Adam
 from keras.regularizers import l2
 
-from numpy.core.umath_tests import inner1d
+def scope_wrapper(func, *args, **kwargs):
+  def scoped_func(*args, **kwargs):
+    with tf.name_scope("quat_{}".format(func.__name__)):
+      return func(*args, **kwargs)
+  return scoped_func
 
 class WeightedPoseLoss(object):
 
-  self.__name__ = 'abstract_w_pose_loss'
+  __name__ = 'abstract_w_pose_loss'
 
-  def __init__(self, beta = 200, gamma = 1):
+  def __init__(self, beta=200, gamma=1):
     self.beta = beta
     if gamma == 1:
       self.L_gamma = K.abs
@@ -30,19 +31,19 @@ class WeightedPoseLoss(object):
     return p_loss + q_loss * self.beta
 
   def position_loss(self, y_true, y_pred):
-    raise NotImplementedError('Position loss has to be overriden!')
+    raise NotImplementedError('Position loss has to be implemented!')
 
   def quaternion_loss(self, y_true, y_pred):
-    raise NotImplementedError('Quaternion loss has to be overriden!')
+    raise NotImplementedError('Quaternion loss has to be implemented!')
 
   def L_gamma_loss(self, y_true, y_pred):
     return K.mean(self.L_gamma(y_true - y_pred), axis=-1)
 
 class NaiveWeightedPoseLoss(WeightedPoseLoss):
 
-  self.__name__ = 'naive_w_pose_loss'
+  __name__ = 'naive_w_pose_loss'
 
- def position_loss(self, y_true, y_pred):
+  def position_loss(self, y_true, y_pred):
     pos_true, pos_pred = y_true[..., :3], y_pred[..., :3]
     return self.L_gamma_loss(pos_true, pos_pred)
 
@@ -52,135 +53,81 @@ class NaiveWeightedPoseLoss(WeightedPoseLoss):
 
 class ProperWeightedPoseLoss(WeightedPoseLoss):
 
-  self.__name__ = 'proper_w_pose_loss'
+  __name__ = 'proper_w_pose_loss'
 
- def position_loss(self, y_true, y_pred):
+  @scope_wrapper
+  def position_loss(self, y_true, y_pred):
     pos_true, pos_pred = y_true[..., :3], y_pred[..., :3]
     return self.L_gamma_loss(pos_true, pos_pred)
 
+  @scope_wrapper
   def quaternion_loss(self, y_true, y_pred):
     quat_true, quat_pred = y_true[..., 3:], y_pred[..., 3:]
+    quat_diff = self.quaternion_mul(quat_true, self.quaternion_conj(quat_pred))
+    quat_error = quat_diff[..., :3] * 0.5
+    return K.mean(self.L_gamma(quat_error), axis=-1)
 
-    
-    return self.L_gamma_loss(quat_true, quat_pred)
+  @scope_wrapper
+  def quaternion_mul(self, q1, q2):
+    x1, y1, z1, w1 = tf.unstack(q1, axis=-1)
+    x2, y2, z2, w2 = tf.unstack(q2, axis=-1)
+    x = w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2
+    y = w1 * y2 + y1 * w2 + z1 * x2 - x1 * z2
+    z = w1 * z2 + z1 * w2 + x1 * y2 - y1 * x2
+    w = w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2
+    return tf.stack([x, y, z, w], axis=-1)
 
-class PoseMetrics(object):
+  @scope_wrapper
+  def quaternion_conj(self, q1):
+    q_vector, q_w = q1[..., :-1], q1[..., -1]
+    return tf.stack([q_vector, -q_w], axis=-1)
 
-  def get_all_metrics():
-    return {
-      'rmse_position'   : PoseMetrics.rmse_position,
-      'mae_position'    : PoseMetrics.mae_position,
-      'median_position' : PoseMetrics.median_position,
-      'stddev_position' : PoseMetrics.stddev_position,
-      'min_position'    : PoseMetrics.min_position,
-      'max_position'    : PoseMetrics.max_position,
+class QuaternionNormalization(Lambda):
 
-      'rmse_orientation'   : PoseMetrics.rmse_orientation,
-      'mae_orientation'    : PoseMetrics.mae_orientation,
-      'median_orientation' : PoseMetrics.median_orientation,
-      'stddev_orientation' : PoseMetrics.stddev_orientation,
-      'min_orientation'    : PoseMetrics.min_orientation,
-      'max_orientation'    : PoseMetrics.max_orientation
-    }
+  def __init__(self, name=None):
+    super(QuaternionNormalization, self).__init__(self.layer, name=name)
 
-  @staticmethod
-  def rmse_position(y_true, y_pred):
-    errors = PoseMetrics.errors_position(y_true, y_pred)
-    return np.sqrt(np.mean(errors ** 2))
-
-  @staticmethod
-  def mae_position(y_true, y_pred):
-    errors = PoseMetrics.errors_position(y_true, y_pred)
-    return np.mean(np.abs(errors))
-
-  @staticmethod
-  def median_position(y_true, y_pred):
-    errors = PoseMetrics.errors_position(y_true, y_pred)
-    return np.median(errors)
-
-  @staticmethod
-  def stddev_position(y_true, y_pred):
-    errors = PoseMetrics.errors_position(y_true, y_pred)
-    return np.std(errors)
-
-  @staticmethod
-  def min_position(y_true, y_pred):
-    errors = PoseMetrics.errors_position(y_true, y_pred)
-    return np.min(errors)
-
-  @staticmethod
-  def max_position(y_true, y_pred):
-    errors = PoseMetrics.errors_position(y_true, y_pred)
-    return np.max(errors)
-
-
-
-  @staticmethod
-  def rmse_orientation(y_true, y_pred):
-    errors = PoseMetrics.errors_orienation(y_true, y_pred)
-    return np.sqrt(np.mean(errors ** 2))
-
-  @staticmethod
-  def mae_orientation(y_true, y_pred):
-    errors = PoseMetrics.errors_orienation(y_true, y_pred)
-    return np.mean(np.abs(errors))
-
-  @staticmethod
-  def median_orientation(y_true, y_pred):
-    errors = PoseMetrics.errors_orienation(y_true, y_pred)
-    return np.median(errors)
-
-  @staticmethod
-  def stddev_orientation(y_true, y_pred):
-    errors = PoseMetrics.errors_orienation(y_true, y_pred)
-    return np.std(errors)
-
-  @staticmethod
-  def min_orientation(y_true, y_pred):
-    errors = PoseMetrics.errors_orienation(y_true, y_pred)
-    return np.min(errors)
-
-  @staticmethod
-  def max_orientation(y_true, y_pred):
-    errors = PoseMetrics.errors_orienation(y_true, y_pred)
-    return np.max(errors)
-
-  @lru_cache
-  @staticmethod
-  def errors_position(y_true, y_pred):
-    pos_true, pos_pred = y_true[..., :3], y_pred[..., :3]
-    return np.linalg.norm(y_true - y_pred, axis=-1)
-
-  @lru_cache
-  @staticmethod
-  def errors_orienation(y_true, y_pred):
-    quat_true = [quat.Quaternion(quat) for quat in y_true[..., 3:]]
-    quat_pred = [quat.Quaternion(quat) for quat in y_pred[..., 3:]]
-    return [(q1.inverse * q2).degrees for q1, q2 in izip(quat_true, quat_pred)]
-
-def quaternion_normalize_layer():
-  def layer(x):
+  def layer(self, x):
     pos, quat = x[..., :3], x[..., 3:]
     quat = K.l2_normalize(quat, axis=-1)
     return K.concatenate([pos, quat], axis=-1)
-  return Lambda(layer):
 
-def naive_linear_regression(input_shape, dropout=0.5, l_rate=1e-3, 
-  beta=200, gamma=1, l2_regu=0.1):
+class WeightedLinearRegression(object):
 
-  model = Sequential()
-  model.add(Dense(2048,
-    activation='relu', 
-    input_shape=(input_shape,),
-    W_regularizer=l2(l2_regu))
-  )
-  model.add(Dropout(dropout))
-  model.add(Dense(7))
-  model.add(Lambda(normalize_quaternion))
+  def __init__(self, input_shape, **kwargs):
 
-  loss = NaiveWeightedPoseLoss(beta=beta, gamma=gamma)
-  optimizer = Adam(lr=l_rate)
-  #metrics = [PoseMetrics.position_rmse, PoseMetrics.orientation_rmse]
-  
-  model.compile(optimizer=optimizer, loss=loss, metrics=metrics)
-  return model
+    self.kwargs = kwargs
+
+    self.model = Sequential()
+    self.model.add(Dense(2048,
+      activation='relu', 
+      input_shape=(input_shape,),
+      W_regularizer=l2(self.kwargs['l2_regu']),
+      name='dense_1'))
+    self.model.add(Dropout(self.kwargs['dropout'], name='dropout_1'))
+    self.model.add(Dense(7, name='dense_2'))
+    self.model.add(QuaternionNormalization(name='quat_norm'))
+
+    self.optimizer = Adam(lr=self.kwargs['l_rate'])
+
+  def build(self):
+    raise NotImplementedError('build method must be implemented in subclass!')
+
+class NaiveWeightedLinearRegression(WeightedLinearRegression):
+
+  def build(self):
+    loss = NaiveWeightedPoseLoss(
+      beta=self.kwargs['beta'],
+      gamma=self.kwargs['gamma'])
+    self.model.compile(optimizer=self.optimizer, loss=loss)
+    self.model.summary()
+    return self.model
+
+class ProperWeightedLinearRegression(WeightedLinearRegression):
+
+  def build(self):
+    loss = ProperWeightedPoseLoss(
+      beta=self.kwargs['beta'],
+      gamma=self.kwargs['gamma'])
+    self.model.compile(optimizer=self.optimizer, loss=loss)
+    return self.model
