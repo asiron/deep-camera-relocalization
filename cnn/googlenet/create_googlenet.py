@@ -5,15 +5,14 @@ import tensorflow as tf
 import keras.backend as K
 
 from keras.models import Model
-from keras.layers import Input, Dense, Conv2D, MaxPooling2D, AveragePooling2D, Dropout, Flatten, Activation, Lambda
+from keras.layers import (
+    Input, Dense, Conv2D, MaxPooling2D, 
+    AveragePooling2D, Dropout, Flatten, Activation, 
+    Lambda, GlobalAveragePooling2D)
 from keras.layers.merge import Concatenate
 from keras.regularizers import l2
 
 from googlenet_layers import LRN
-
-#from keras.optimizers import SGD
-#from scipy.misc import imread, imresize
-#from keras.applications.imagenet_utils import decode_predictions
 
 def create_googlenet(weights_path, model_output_path):
     # creates GoogLeNet a.k.a. Inception v1 (Szegedy, 2015)
@@ -122,8 +121,10 @@ def create_googlenet(weights_path, model_output_path):
     inception_5b_pool_proj = Conv2D(128, (1,1), padding='same',activation='relu',name='inception_5b_pool_proj',kernel_regularizer=l2(0.0002))(inception_5b_pool)    
     inception_5b_output = Concatenate(axis=-1,name='inception_5b_output')([inception_5b_1x1,inception_5b_3x3,inception_5b_5x5,inception_5b_pool_proj])
     
+    output = GlobalAveragePooling2D()(inception_5b_output)
+
     googlenet_base = Model(inputs=input, outputs=inception_5a_output)
-    last_inception_block = Model(inputs=last_inception_block_input, outputs=inception_5b_output)
+    last_inception_block = Model(inputs=last_inception_block_input, outputs=output)
     
     weights = np.load(weights_path)
 

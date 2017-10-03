@@ -18,6 +18,8 @@ class GoogleNet(object):
     if dataset not in GoogleNet.DATASETS:
       raise ValueError('Must specify a valid dataset!')
 
+    self.input_shape = (224, 224, 3)
+
     weights_dir = os.path.join(os.path.dirname(__file__), dataset)
     
     last_inception_block_file = os.path.join(
@@ -33,15 +35,14 @@ class GoogleNet(object):
       model = Sequential()
       model.add(googlenet_base)
       model.add(last_inception_block)
-      model.add(GlobalAveragePooling2D())
 
       self.model = Model(inputs=googlenet_base.input,
         outputs=[googlenet_base.output, model.output])
 
     elif mode == 'finetune':
-
       self.model = last_inception_block
 
+  @staticmethod
   def preprocess_image(self, images):
     '''
     Assumes that images are in RGB and converts to BGR

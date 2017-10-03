@@ -1,7 +1,5 @@
-import os, re
 import numpy as np
-
-import time, contextlib
+import time, contextlib, itertools, os, re
 
 from keras.models import Model
 from keras.callbacks import Callback, CSVLogger, TensorBoard
@@ -16,6 +14,12 @@ def timeit(name):
 def make_dir(directory):
   if not os.path.exists(directory):
     os.makedirs(directory)
+
+def grouper(iterable, n, fillvalue=None):
+  "Collect data into fixed-length chunks or blocks"
+  args = [iter(iterable)] * n
+  return itertools.izip_longest(fillvalue=fillvalue, *args)
+
 
 def find_files(directory, regex):
   files = os.listdir(directory)

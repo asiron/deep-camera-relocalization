@@ -1,42 +1,41 @@
 #!/usr/bin/env
 
-import argparse, os, scipy, re, itertools
+import argparse, os
 import numpy as np
-
 from tqdm import tqdm
 
-from keras.applications.vgg19 import VGG19
-from keras.applications.inception_v3 import InceptionV3
-from keras.models import Model
+from cnn.googlenet import GoogleNet
+from cnn.inception_resnet_v2 import InceptionResNetV2
+from cnn.image_utils import load_and_process
 
-from keras.preprocessing.image import ImageDataGenerator
+from utils import find_files, grouper, make_dir
 
-import keras.backend as K
-import tensorflow as tf
+MODELS = {
+  'googlenet' : GoogleNet,
+  'inception_resnet_v2' : InceptionResNetV2
+}
 
-from utils import find_files
-
-POSSIBLE_MODELS = [
-  'vgg16', 
-  'resnet50', 
-  'inception_v3', 
-  'inception_resnet_v2'
+DATASETS = [
+  'places365',
+  'imagenet'
 ]
 
-def grouper(iterable, n, fillvalue=None):
-  "Collect data into fixed-length chunks or blocks"
-  args = [iter(iterable)] * n
-  return itertools.izip_longest(fillvalue=fillvalue, *args)
-
-def generate_images(directory, batch_size=10, resize=(299, 299), data_format='channel_first'):
-  
+def generate_images(directory, batch_size=10, resize=(299, 299), func=lambda x: x):
+  '''
+  Generator, which yields processed images in batches from a directory
+  Preprocesing does the following:
+    resizes image to a given dimensions with a center crop
+    scales image s.t each pixel is in [-1, 1] range
+    applies a function at the end if any is given
+  '''
   pattern = '^image_[0-9]{5}\.(png|jpg)$'
   image_filenames = find_files(directory, pattern)
 
   def generator():
+    process_file = lambda f: func(load_and_process(f, resize))
+
     for filenames_batch in grouper(image_filenames, batch_size):
-      #print filenames_batch
-      batch = [load_and_process(f, data_format, resize) for f in filenames_batch if f != None]
+      batch = [process_file(f) for f in filenames_batch if f != None]
       yield np.array(batch)
 
     '''wtf, predict_generator keeps calling next() even after all the steps'''
@@ -44,109 +43,44 @@ def generate_images(directory, batch_size=10, resize=(299, 299), data_format='ch
       yield
 
   steps = len(image_filenames) / float(batch_size)
-  print int(np.ceil(steps))
   return generator(), int(np.ceil(steps))
-
-def load_and_process(image_filename, data_format, resize):
-  image = scipy.misc.imread(image_filename, mode='RGB')
-  return preprocess_image(image, data_format, *resize)
-
-def preprocess_image(img, data_format, new_height, new_width):
-  if img.shape[0] > img.shape[1]:
-    raise ValueError('Image is not in HW format (Height, Width')
-
-  resized_height = new_height
-  resized_width = int(new_width * (img.shape[1] / float(img.shape[0])))
-  
-  img = scipy.misc.imresize(img, (resized_height, resized_width))
-  img = center_crop(img, new_height, new_width)
-  img = scale_img(img)
-  img = np.transpose(img, (2, 0, 1)) if data_format == 'channels_first' else img
-  return img 
-
-def center_crop(img, new_height, new_width):
-  y, x = img.shape[:2]
-  startx = x // 2 - (new_width  // 2)
-  starty = y // 2 - (new_height // 2)    
-  return img[starty:starty+new_height, startx:startx+new_width]
-
-def scale_img(img):
-  img = img.astype(float)
-  img /= 255.0
-  img -= 0.5
-  img *= 2
-  return img
 
 def main():
   parser = argparse.ArgumentParser()
-  parser.add_argument('dataset', help='Path to the dataset')
+  parser.add_argument('images', 
+    help='Path to the images directory that contains images')
   parser.add_argument('output', help='Path to an output directory')
-  #parser.add_argument('-i', '--img_size', required=True, type=img_size_type,
-  #  help='Size of images in the dataset in HxW format, e.g. 720x1280')
-  parser.add_argument('-c', '--channels', default='first',
-    choices=['first', 'last'],
-    help='Tensor ordering: NHWC or NCHW')
   parser.add_argument('-m', '--model', default='inception_resnet_v2', 
-    choices=POSSIBLE_MODELS,
+    choices=MODELS.keys(),
     help='Pretrained CNN model from which we extract features')
+  parser.add_argument('-d', '--dataset', default='places365', 
+    choices=DATASETS,
+    help='Dataset on which the CNN model was pretrained')
   
   args = parser.parse_args()
 
-  '''
-  config = tf.ConfigProto()
-  config.gpu_options.allow_growth=True
-  sess = tf.Session(config=config)
-  K.set_session(sess)
-  '''
+  model = MODELS[args.model](dataset=args.dataset, mode='extract')
   
+  input_shape = model.input_shape[:2]
+
+  image_generator, steps = generate_images(
+    args.images, 
+    batch_size=10, 
+    resize=input_shape,
+    func=model.preprocess_image
+  )
+
+  cnn_f, finetune_f = model.model.predict_generator(image_generator, steps, verbose=True)
+
   output_dir = args.output
-  if not os.path.exists(output_dir):
-    os.makedirs(output_dir)
+  make_dir(output_dir)
 
-  batch_size = 16
-  resize = (299, 299)
+  finetune_features = os.path.join(output_dir, 'finetune_features.npy')
+  cnn_features = os.path.join(output_dir, 'cnn_features.npy')
 
-  if args.channels == 'first':
-    K.set_image_data_format('channels_first')
-    input_shape = (3,) + resize
-  elif args.channels == 'last':
-    input_shape = resize + (3,)
-
-  base_model = InceptionV3(weights='imagenet', include_top=True, input_shape=input_shape)
-  model = Model(inputs=base_model.input, outputs=base_model.get_layer('avg_pool').output)
- 
-
-  '''
-  steps = int(np.ceil(dataset_img_count / float(batch_size)))
-  original_img_size = args.img_size
-  dataset_img_count = len(os.listdir(os.path.join(args.dataset, 'images')))
-
-  image_datagen = ImageDataGenerator(
-    preprocessing_function=lambda i: preprocess_image(i, *resize, data_format=args.channels)
-  )
-  image_generator = image_datagen.flow_from_directory(
-    args.dataset,
-    class_mode=None,
-    shuffle=False,
-    target_size=original_img_size,
-    batch_size=batch_size,
-    save_to_dir=output_dir
-  )
-  '''
-  image_generator, steps = generate_images(args.dataset, 
-    batch_size=batch_size, 
-    resize=resize, 
-    data_format=K.image_data_format()
-  )
-
-  #for i in image_generator:
-  # print i.shape
-
-  features = model.predict_generator(image_generator, steps, verbose=True)
-  print features.shape
-
-  output_features = os.path.join(output_dir, 'features.npy')
-  np.save(output_features, features)
+  np.save(finetune_features, np.array(finetune_f[0]))
+  np.save(cnn_features, np.array(cnn_f[0]))
+  
   
 if __name__ == '__main__':
   main()

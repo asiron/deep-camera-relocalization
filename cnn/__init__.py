@@ -1,1 +1,1 @@
-__all__ = ['inception_resnet_v2', 'googlenet']
+__all__ = ['inception_resnet_v2', 'googlenet', 'image_utils']
