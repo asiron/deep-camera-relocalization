@@ -1,4 +1,0 @@
-[submodule "pkgs/tfquaternion"]
-	path = pkgs/tfquaternion
-	url = git@github.com:asiron/tf-quaternion.git
-	branch = master
