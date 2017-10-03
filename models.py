@@ -26,9 +26,12 @@ class WeightedPoseLoss(object):
       raise ValueError('gamma has to be either 1 or 2 (L1 or L2 loss)')
 
   def __call__(self, y_true, y_pred):
+    return self.loss(y_true, y_pred)
+
+  def loss(self, y_true, y_pred):
     p_loss = self.position_loss(y_true, y_pred)
     q_loss = self.quaternion_loss(y_true, y_pred)
-    return p_loss + q_loss * self.beta
+    return p_loss + q_loss * self.beta    
 
   def position_loss(self, y_true, y_pred):
     raise NotImplementedError('Position loss has to be implemented!')
@@ -69,8 +72,8 @@ class ProperWeightedPoseLoss(WeightedPoseLoss):
 
   @scope_wrapper
   def quaternion_mul(self, q1, q2):
-    x1, y1, z1, w1 = tf.unstack(q1, axis=-1)
-    x2, y2, z2, w2 = tf.unstack(q2, axis=-1)
+    x1, y1, z1, w1 = tf.unstack(q1, num=4, axis=-1)
+    x2, y2, z2, w2 = tf.unstack(q2, num=4, axis=-1)
     x = w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2
     y = w1 * y2 + y1 * w2 + z1 * x2 - x1 * z2
     z = w1 * z2 + z1 * w2 + x1 * y2 - y1 * x2
@@ -78,19 +81,20 @@ class ProperWeightedPoseLoss(WeightedPoseLoss):
     return tf.stack([x, y, z, w], axis=-1)
 
   @scope_wrapper
-  def quaternion_conj(self, q1):
-    q_vector, q_w = q1[..., :-1], q1[..., -1]
-    return tf.stack([q_vector, -q_w], axis=-1)
+  def quaternion_conj(self, q):
+    q_vector, q_w = q[..., :-1], tf.reshape(q[..., -1], [-1, 1])
+    return tf.concat([q_vector, -q_w], axis=-1)
 
 class QuaternionNormalization(Lambda):
 
   def __init__(self, name=None):
-    super(QuaternionNormalization, self).__init__(self.layer, name=name)
+    def layer(x):
+      pos, quat = x[..., :3], x[..., 3:]
+      quat = K.l2_normalize(quat, axis=-1)
+      return K.concatenate([pos, quat], axis=-1)
 
-  def layer(self, x):
-    pos, quat = x[..., :3], x[..., 3:]
-    quat = K.l2_normalize(quat, axis=-1)
-    return K.concatenate([pos, quat], axis=-1)
+    super(QuaternionNormalization, self).__init__(layer, name=name)
+
 
 class WeightedLinearRegression(object):
 

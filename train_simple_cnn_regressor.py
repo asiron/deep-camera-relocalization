@@ -57,8 +57,8 @@ def hyperparam_search(model_class, X, y, output=None, iters=50):
     hyperparam_desc = ('L{gamma},beta={beta:.1f},lr={l_rate:.2e},'
       + 'dropout={dropout:.2f},l2_regu={l2_regu:.2f}').format(**sample)
 
-    early_stopper = EarlyStopping(monitor='val_loss', 
-      min_delta=1.0, patience=50, verbose=1)
+    #early_stopper = EarlyStopping(monitor='val_loss', 
+    #  min_delta=1.0, patience=50, verbose=1)
  
     lrscheduler = LearningRateScheduler(
       lambda e: sample['l_rate'] * (0.9 ** (e//80))
@@ -84,7 +84,8 @@ def hyperparam_search(model_class, X, y, output=None, iters=50):
       period=10
     )
 
-    callbacks = [logger, model_checkpoint, lrscheduler, early_stopper]
+    #callbacks = [logger, model_checkpoint, lrscheduler, early_stopper]
+    callbacks = [logger, model_checkpoint, lrscheduler]
 
     X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.25)
 
@@ -110,6 +111,7 @@ def main():
   parser.add_argument('-m', '--model', type=str, default='naive-w',
     choices=['naive-w', 'naive-p', 'homo-w', 'homo-p'],
     help='Number of iterations for the random hyperparameter search')
+  parser.add_argument('-c', '--checkpoint', type=str)
   args = parser.parse_args()
   
   features = np.vstack([np.load(f) for f in args.features])
@@ -118,6 +120,21 @@ def main():
   X_train, X_test, y_train, y_test = train_test_split(
     features, labels, train_size=0.8
   )
+
+  '''
+  if args.checkpoint:
+    from keras.models import load_model
+    from models import QuaternionNormalization, ProperWeightedPoseLoss
+
+    model = load_model(args.checkpoint, custom_objects={
+      'QuaternionNormalization' : lambda *args, **kwargs: QuaternionNormalization('quat_norm'),
+      'proper_w_pose_loss' : ProperWeightedPoseLoss(beta=11, gamma=1)
+    })
+
+    model.predict(features, batch_size=128, verbose=1)
+    print 'OK!'
+    return
+  '''
 
   if args.model in ['homo-w', 'homo-p']:
     raise NotImplementedError('Homoescedastic uncertaintity is not yet implemented')
