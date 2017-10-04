@@ -1,6 +1,18 @@
 import quaternion, argparse, re, os
 import numpy as np
 
+'''
+Takes a file with 4x4 Transformation matrix and converts it to (frame_idx, pos, quat)
+Resulting file is saved at the same place with name -> pos_{frame_idx}.txt in order
+to be consistent with my original dataset
+
+Run the command with xargs for 7places dataset in root dir of the dataset:
+
+$ find . -regex ".*frame-[0-9]*\.pose\.txt$" \
+  | xargs -l -n1 -P 12 python convert_pose_file.py
+
+'''
+
 patt = re.compile("[^\t\ \r\n]+")
 
 def main():

@@ -8,26 +8,10 @@ from keras.callbacks import (
   EarlyStopping
 )
 
-from utils import find_files, make_dir, ExtendedLogger, load_labels
+from utils import find_files, make_dir, load_labels, ExtendedLogger
 from sklearn.model_selection import train_test_split
 
-from metrics import PoseMetrics
-from models import (
-  NaiveWeightedLinearRegression, 
-  ProperWeightedLinearRegression
-)
-
-LOSSES = [
-  'naive-w', 
-  'naive-q', 
-  'homo-w', 
-  'homo-q'
-]
-
-MODELS = [
-  'linear',
-  'lstm'
-]
+from models import pose_model, losses, metrics
 
 def hyperparam_search(model_class, X, y, output=None, iters=50):
 
@@ -67,7 +51,7 @@ def hyperparam_search(model_class, X, y, output=None, iters=50):
 
     logger = ExtendedLogger('quat_norm',
       csv_dir=csv_directory, tb_dir=tb_directory)
-    logger.add_validation_metrics(PoseMetrics.get_all_metrics())
+    logger.add_validation_metrics(metrics.PoseMetrics.get_all_metrics())
 
     mc_directory = os.path.join(
       output, 
@@ -98,27 +82,45 @@ def hyperparam_search(model_class, X, y, output=None, iters=50):
 
 def main():
   parser = argparse.ArgumentParser()
+  
   parser.add_argument('-l', '--labels', nargs='+', required=True, 
     help='Path to a directory with labels')
+  
   parser.add_argument('-f', '--features', nargs='+', required=True,
     help='Path to a numpy array with features')
+  
   parser.add_argument('-o', '--output', required=True, 
     help='Path to an output dir with tensorboard logs, csv, checkpoints, etc')
-  parser.add_argument('-i', '--iters', type=int, default=50,
-    help='Number of iterations for the random hyperparameter search')
   
-
-  parser.add_argument('-m', '--model', type=str, default='linear',
-    choices=MODELS,
-    help='Model to use for regression')
+  parser.add_argument('-tm', '--top-model', type=str, default='regressor',
+    choices=pose_model.TOPMODELS.keys(),
+    help='Top model to use for regression')
   
-  parser.add_argument('--loss', type=str, default='naive-w',
-    choices=LOSSES,
+  parser.add_argument('--loss', type=str, default='naive_weighted',
+    choices=losses.LOSSES.keys(),
     help='Loss function to use for optimization')
 
-  parser.add_argument('-c', '--checkpoint', type=str)
+  parser.add_argument('-m', '--model', type=str, default='initial',
+    choices=pose_model.PoseModel.MODES,
+    help='Training mode, initial or finetuning')
+
+  parser.add_argument('-i', '--iters', type=int, default=50,
+    help='Number of iterations for the random hyperparameter search')
+
+
+  #parser.add_argument('-c', '--checkpoint', type=str)
   args = parser.parse_args()
   
+  if args.mode == 'initial':
+    pass
+    # model = pose_model.PoseModel()
+
+  elif args.mode == 'finetune':
+    pass
+
+
+  '''
+
   features = np.vstack([np.load(f) for f in args.features])
   #labels = np.vstack([load_labels(l) for l in args.labels])
   labels = [load_labels(l)[33:] for l in args.labels][0]
@@ -157,7 +159,6 @@ def main():
 
   return
 
-  '''
   if args.checkpoint:
     from keras.models import load_model
     from models import QuaternionNormalization, ProperWeightedPoseLoss
@@ -170,8 +171,7 @@ def main():
     model.predict(features, batch_size=128, verbose=1)
     print 'OK!'
     return
-  '''
-
+  
   if args.model in ['homo-w', 'homo-p']:
     raise NotImplementedError('Homoescedastic uncertaintity is not yet implemented')
 
@@ -185,6 +185,7 @@ def main():
   # predictions = model.predict(X_valid, verbose=True)
   # np.save('predicted.npy', predictions)
   # np.save('true.npy', y_valid)
+  '''
 
 if __name__ == '__main__':
   main()
