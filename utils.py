@@ -1,6 +1,8 @@
 import numpy as np
 import time, contextlib, itertools, os, re
 
+from tqdm import tqdm
+
 from keras.models import Model
 from keras.callbacks import Callback, CSVLogger, TensorBoard
 
@@ -14,7 +16,7 @@ def timeit(name):
   start_time = time.time()
   yield
   elapsed_time = time.time() - start_time
-  print('[{}] finished in {} ms'.format(name, int(elapsed_time * 1000)))
+  tqdm.write('[{}] finished in {} ms'.format(name, int(elapsed_time * 1000)))
 
 def grouper(iterable, n, fillvalue=None):
   "Collect data into fixed-length chunks or blocks"
@@ -39,8 +41,6 @@ def load_labels(directory, pattern=LABEL_PATTERN):
       parsed_line = map(float, file.readlines()[0].split(','))
       pose = parsed_line[1:]
       labels.append(pose)
-
-  print 'Labels loaded!'
   return np.array(labels)
 
 def generate_images(directory, batch_size=10, 
@@ -72,13 +72,16 @@ class ExtendedLogger(Callback):
 
   val_data_metrics = {}
 
-  def __init__(self, prediction_layer, csv_dir='./csv', tb_dir='./tensorboard'):
+  def __init__(self, prediction_layers, csv_dir='./csv', tb_dir='./tensorboard'):
     super(ExtendedLogger, self).__init__()
     make_dir(csv_dir)
     make_dir(tb_dir)
-    self.prediction_layer = prediction_layer
     self.csv_logger = CSVLogger(os.path.join(csv_dir, 'run.csv'))
     self.tensorboard = TensorBoard(log_dir=tb_dir, write_graph=True)
+
+    self.prediction_layers = prediction_layers
+    if not isinstance(prediction_layers, list):
+      self.prediction_layers = [prediction_layers]
 
   def set_params(self, params):
     super(ExtendedLogger, self).set_params(params)
@@ -112,22 +115,22 @@ class ExtendedLogger(Callback):
 
   def on_epoch_end(self, epoch, logs=None):
 
-    batch_size = self.params['batch_size']
-    prediction_model = Model(inputs=self.model.input, 
-      outputs=self.model.get_layer(self.prediction_layer).output)
+    with timeit('metrics'):
+      outputs = [self.model.get_layer(l).output for l in self.prediction_layers]
+      self.prediction_model = Model(inputs=self.model.input, outputs=outputs)
 
-    y_true = self.validation_data[1]
-    with timeit('prediction'):
-      y_pred = prediction_model.predict(
+      batch_size = self.params['batch_size']
+
+      y_true = self.validation_data[1]
+      y_pred = self.prediction_model.predict(
         self.validation_data[0], batch_size=batch_size, verbose=1)
 
-    with timeit('metrics'):
       new_logs = {name: np.array(metric(y_true, y_pred))
         for name, metric in self.val_data_metrics.items()}
       logs.update(new_logs)
 
-    self.csv_logger.on_epoch_end(epoch, logs=logs)
-    self.tensorboard.on_epoch_end(epoch, logs=logs)
+      self.csv_logger.on_epoch_end(epoch, logs=logs)
+      self.tensorboard.on_epoch_end(epoch, logs=logs)
 
   def add_validation_metrics(self, metrics_dict):
     self.val_data_metrics.update(metrics_dict)

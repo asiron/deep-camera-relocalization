@@ -14,14 +14,14 @@ class Regressor(object):
 
     inputs = Input(shape=input_shape)
 
-    x = Dense(input_shape,
+    x = Dense(input_shape[0],
       activation='relu', 
       W_regularizer=l2(self.kwargs['l2_regu']))(inputs)
     x = Dropout(self.kwargs['dropout'])(x)
-    pos, quat = Dense(3)(x), Dense(4)(x)
-    quat = QuaternionNormalization(quat, name='quat_norm')
+    x = Dense(7)(x)
+    x = QuaternionNormalization(name='quat_norm')(x)
 
-    self.model = Model(inputs=inputs, outputs=[pos, quat])
+    self.model = Model(inputs=inputs, outputs=x)
 
 
 

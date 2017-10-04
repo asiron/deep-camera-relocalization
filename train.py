@@ -1,6 +1,6 @@
 #!/usr/bin/env
-import argparse, os
 import numpy as np
+import argparse, os, importlib
 
 from keras.callbacks import (
   LearningRateScheduler, 
@@ -8,74 +8,77 @@ from keras.callbacks import (
   EarlyStopping
 )
 
-from utils import find_files, make_dir, load_labels, ExtendedLogger
+from utils import make_dir, load_labels, ExtendedLogger
 from sklearn.model_selection import train_test_split
 
 from models import pose_model, losses, metrics
 
-def hyperparam_search(model_class, X, y, output=None, iters=50):
+def create_callbacks(output='/tmp', prediction_layers=None, 
+  run_identifier=None, l_rate_scheduler=None):
+  '''
+  Custom logger runs prediction at the end of a training epoch 
+  for the validationdataset. In order to retrieve the prediction 
+  on a specific layer, we have to pass the names of these layers. 
+  This allows for custom loss functions with trainable parameters.
+  @see losses
+  '''
+
+  # early_stopper = EarlyStopping(monitor='val_loss', 
+  #  min_delta=1.0, patience=50, verbose=1)
+
+  lrscheduler = LearningRateScheduler(l_rate_scheduler)
+
+  tb_directory  = os.path.join(output, 'tensorboard', run_identifier)
+  csv_directory = os.path.join(output, 'csv', run_identifier)
+
+  logger = ExtendedLogger(prediction_layers,
+    csv_dir=csv_directory, tb_dir=tb_directory)
+  logger.add_validation_metrics(metrics.PoseMetrics.get_all_metrics())
+
+  mc_directory = os.path.join(
+    output,
+    'checkpoints',
+    run_identifier,
+    'weights.{epoch:04d}-{val_loss:.4f}.hdf5'
+  )
+  make_dir(mc_directory)
+  model_checkpoint = ModelCheckpoint(
+    mc_directory, 
+    save_best_only=True,
+    period=10
+  )
+
+  return [logger, model_checkpoint, lrscheduler]
+
+def hyperparam_search(model_class, X, y, config=None, output=None, iters=50):
+
+  if not config:
+    raise ValueError('Hyperparam config has to be specified!')
 
   if not output:
-    raise ValueError('Output directory has to be defined!')
-
-  gamma_space   = lambda: np.random.randint(1, high=3)
-  beta_space    = lambda: np.exp(np.random.uniform(4, 6.5))
-  l_rate_space  = lambda: 10 ** np.random.uniform(-6, -3)
-  dropout_space = lambda: np.random.uniform(0.1, 0.7)
-  l2_regu_space = lambda: np.random.uniform(0.1, 0.4)
-
-  hyperparam_space = {
-    'gamma'   : gamma_space, 
-    'beta'    : beta_space, 
-    'l_rate'  : l_rate_space, 
-    'dropout' : dropout_space,
-    'l2_regu' : l2_regu_space
-  }
+    raise ValueError('Output has to be specified!')
 
   for _ in xrange(iters):
 
-    sample = {v: space() for v, space in hyperparam_space.items()}
+    hyperparameter_space = config.space
+    hyperparams = {var: gen() for var, gen in hyperparameter_space.items()}
+    hyperparam_desc = config.desc.format(**hyperparams)
 
-    hyperparam_desc = ('L{gamma},beta={beta:.1f},lr={l_rate:.2e},'
-      + 'dropout={dropout:.2f},l2_regu={l2_regu:.2f}').format(**sample)
+    l_rate_scheduler = config.make_l_rate_scheduler(hyperparams['l_rate'])
 
-    #early_stopper = EarlyStopping(monitor='val_loss', 
-    #  min_delta=1.0, patience=50, verbose=1)
- 
-    lrscheduler = LearningRateScheduler(
-      lambda e: sample['l_rate'] * (0.9 ** (e//80))
+    callbacks = create_callbacks(output=output, 
+      prediction_layers='quat_norm', 
+      run_identifier=hyperparam_desc,
+      l_rate_scheduler=l_rate_scheduler
     )
-
-    tb_directory  = os.path.join(output, 'tensorboard', hyperparam_desc)
-    csv_directory = os.path.join(output, 'csv', hyperparam_desc)
-
-    logger = ExtendedLogger('quat_norm',
-      csv_dir=csv_directory, tb_dir=tb_directory)
-    logger.add_validation_metrics(metrics.PoseMetrics.get_all_metrics())
-
-    mc_directory = os.path.join(
-      output, 
-      'checkpoints',
-      hyperparam_desc,
-      'weights.{epoch:04d}-{val_loss:.4f}.hdf5'
-    )
-    make_dir(mc_directory)
-    model_checkpoint = ModelCheckpoint(
-      mc_directory, 
-      save_best_only=True,
-      period=10
-    )
-
-    #callbacks = [logger, model_checkpoint, lrscheduler, early_stopper]
-    callbacks = [logger, model_checkpoint, lrscheduler]
 
     X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.25)
 
-    model = model_class(2048, **sample).build()
+    model = model_class(**hyperparams).model
     model.fit(X_train, y_train, 
       batch_size=128,
       validation_data=(X_val, y_val),
-      epochs=1000,
+      epochs=10,
       callbacks=callbacks,
       verbose=True
     )
@@ -85,43 +88,71 @@ def main():
   
   parser.add_argument('-l', '--labels', nargs='+', required=True, 
     help='Path to a directory with labels')
-  
   parser.add_argument('-f', '--features', nargs='+', required=True,
     help='Path to a numpy array with features')
-  
   parser.add_argument('-o', '--output', required=True, 
     help='Path to an output dir with tensorboard logs, csv, checkpoints, etc')
-  
-  parser.add_argument('-tm', '--top-model', type=str, default='regressor',
-    choices=pose_model.TOPMODELS.keys(),
-    help='Top model to use for regression')
-  
-  parser.add_argument('--loss', type=str, default='naive_weighted',
-    choices=losses.LOSSES.keys(),
-    help='Loss function to use for optimization')
+ 
 
-  parser.add_argument('-m', '--model', type=str, default='initial',
+  parser.add_argument('-m', '--mode', default='initial',
     choices=pose_model.PoseModel.MODES,
     help='Training mode, initial or finetuning')
+  parser.add_argument('--top-model-weights',
+    help='Top-model\'s weights for finetuning')
+  parser.add_argument('--finetuning-model',
+    help='Keras model for finetuning (excluding top model part)')
+
+  parser.add_argument('-tm', '--top-model-type', default='regressor',
+    choices=pose_model.TOPMODELS.keys(),
+    help='Top model to use for regression')
+  parser.add_argument('--loss', default='naive_weighted',
+    choices=losses.LOSSES.keys(),
+    help='Loss function to use for optimization')
+  parser.add_argument('-hp', '--hyperparam-config', required=True,
+    help='Python file with hyperparameter configuration')
 
   parser.add_argument('-i', '--iters', type=int, default=50,
     help='Number of iterations for the random hyperparameter search')
 
-
   #parser.add_argument('-c', '--checkpoint', type=str)
+  
   args = parser.parse_args()
   
+  hyperparam_config = importlib.import_module(args.hyperparam_config)
+  features = np.vstack([np.load(f) for f in args.features])
+  labels = np.vstack([load_labels(l) for l in args.labels])
+
+  X_train, X_test, y_train, y_test = train_test_split(
+    features, labels, train_size=0.8)
+
   if args.mode == 'initial':
-    pass
-    # model = pose_model.PoseModel()
+    
+    def model_class(**hyperparams):
+      return pose_model.PoseModel(
+        input_shape=(features.shape[1],),
+        top_model_type=args.top_model_type,
+        model_loss=args.loss,
+        mode=args.mode,
+        **hyperparams)
 
   elif args.mode == 'finetune':
-    pass
 
+    def model_class(**hyperparams):
+      return pose_model.PoseModel(
+        input_shape=None,
+        top_model_type=args.top_model_type,
+        model_loss=args.loss,
+        mode=args.mode,
+        finetune_model=load_model(args.finetuning_model),
+        topmodel_weights=args.top_model_weights,
+        **hyperparams)
+
+  hyperparam_search(model_class, X_train, y_train,
+    config=hyperparam_config,
+    output=args.output, 
+    iters=args.iters)
 
   '''
-
-  features = np.vstack([np.load(f) for f in args.features])
   #labels = np.vstack([load_labels(l) for l in args.labels])
   labels = [load_labels(l)[33:] for l in args.labels][0]
 
@@ -135,6 +166,7 @@ def main():
   # X_train, X_test, y_train, y_test = train_test_split(
   #   features, labels, train_size=0.8
   # )
+  
 
   import matplotlib as mpl
   from mpl_toolkits.mplot3d import Axes3D
