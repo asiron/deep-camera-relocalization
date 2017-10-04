@@ -18,6 +18,7 @@ LABELS=(
   "../../datasets/wing/position01/seq00/labels"
 )
 
+MODEL=linear
 LOSS=naive-w
 OUTPUT_DIR="new-test-runs/${LOSS}/-`date +"%m_%d_%Y--%H-%M-%S"`"
 
@@ -26,7 +27,8 @@ python train_simple_cnn_regressor.py \
   -f "${FEATURES[@]}" \
   -o "${OUTPUT_DIR}" \
   -i 200 \
-  -m "${LOSS}"
+  -m "${MODEL}" \
+  --loss "${LOSS}"
 
 # python train_simple_cnn_regressor.py \
 #   -l "${LABELS[@]}" \

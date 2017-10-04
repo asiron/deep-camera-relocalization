@@ -37,16 +37,16 @@ class GoogleNet(object):
       model.add(last_inception_block)
 
       self.model = Model(inputs=googlenet_base.input,
-        outputs=[googlenet_base.output, model.output])
+        outputs=[model.output, googlenet_base.output])
 
     elif mode == 'finetune':
       self.model = last_inception_block
 
   @staticmethod
-  def preprocess_image(self, images):
+  def preprocess_image(img):
     '''
-    Assumes that images are in RGB and converts to BGR
+    Assumes that img are in RGB and converts to BGR
     '''
-    images[:,:,[0,1,2]] = images[:,:,[2,1,0]]
-    return images
+    img[...,[0,1,2]] = img[...,[2,1,0]]
+    return img
 

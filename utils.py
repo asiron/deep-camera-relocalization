@@ -4,6 +4,11 @@ import time, contextlib, itertools, os, re
 from keras.models import Model
 from keras.callbacks import Callback, CSVLogger, TensorBoard
 
+from cnn.image_utils import load_and_process
+
+LABEL_PATTERN = 'pos_[0-9]*.txt'
+IMAGE_PATTERN = '^image_[0-9]{5}\.(png|jpg)$'
+
 @contextlib.contextmanager
 def timeit(name):
   start_time = time.time()
@@ -11,21 +16,57 @@ def timeit(name):
   elapsed_time = time.time() - start_time
   print('[{}] finished in {} ms'.format(name, int(elapsed_time * 1000)))
 
-def make_dir(directory):
-  if not os.path.exists(directory):
-    os.makedirs(directory)
-
 def grouper(iterable, n, fillvalue=None):
   "Collect data into fixed-length chunks or blocks"
   args = [iter(iterable)] * n
   return itertools.izip_longest(fillvalue=fillvalue, *args)
 
+def make_dir(directory):
+  if not os.path.exists(directory):
+    os.makedirs(directory)
 
 def find_files(directory, regex):
   files = os.listdir(directory)
   files = [f for f in files if re.search(regex, f)]
   files = sorted([os.path.join(directory, f) for f in files])
   return files
+
+def load_labels(directory, pattern=LABEL_PATTERN):
+  labels = []
+  label_files = find_files(directory, pattern)
+  for label_file in label_files:
+    with open(label_file, 'r') as file:
+      parsed_line = map(float, file.readlines()[0].split(','))
+      pose = parsed_line[1:]
+      labels.append(pose)
+
+  print 'Labels loaded!'
+  return np.array(labels)
+
+def generate_images(directory, batch_size=10, 
+  resize=(299, 299), func=lambda x: x, pattern=IMAGE_PATTERN):
+  '''
+  Generator, which yields processed images in batches from a directory
+  Preprocesing does the following:
+    resizes image to a given dimensions with a center crop
+    scales image s.t each pixel is in [-1, 1] range
+    applies a function at the end if any is given
+  '''
+  image_filenames = find_files(directory, pattern)
+
+  def generator():
+    process_file = lambda f: func(load_and_process(f, resize))
+
+    for filenames_batch in grouper(image_filenames, batch_size):
+      batch = [process_file(f) for f in filenames_batch if f != None]
+      yield np.array(batch)
+
+    '''wtf, predict_generator keeps calling next() even after all the steps'''
+    while True:
+      yield
+
+  steps = len(image_filenames) / float(batch_size)
+  return generator(), int(np.ceil(steps))
 
 class ExtendedLogger(Callback):
 

@@ -8,7 +8,7 @@ from keras.callbacks import (
   EarlyStopping
 )
 
-from utils import find_files, make_dir, ExtendedLogger
+from utils import find_files, make_dir, ExtendedLogger, load_labels
 from sklearn.model_selection import train_test_split
 
 from metrics import PoseMetrics
@@ -17,19 +17,17 @@ from models import (
   ProperWeightedLinearRegression
 )
 
-LABEL_PATTERN = 'pos_[0-9]*.txt'
+LOSSES = [
+  'naive-w', 
+  'naive-q', 
+  'homo-w', 
+  'homo-q'
+]
 
-def load_labels(directory, pattern=LABEL_PATTERN):
-  labels = []
-  label_files = find_files(directory, pattern)
-  for label_file in label_files:
-    with open(label_file, 'r') as file:
-      parsed_line = map(float, file.readlines()[0].split(','))
-      pose = parsed_line[1:]
-      labels.append(pose)
-
-  print 'Labels loaded!'
-  return np.array(labels)
+MODELS = [
+  'linear',
+  'lstm'
+]
 
 def hyperparam_search(model_class, X, y, output=None, iters=50):
 
@@ -108,18 +106,56 @@ def main():
     help='Path to an output dir with tensorboard logs, csv, checkpoints, etc')
   parser.add_argument('-i', '--iters', type=int, default=50,
     help='Number of iterations for the random hyperparameter search')
-  parser.add_argument('-m', '--model', type=str, default='naive-w',
-    choices=['naive-w', 'naive-p', 'homo-w', 'homo-p'],
-    help='Number of iterations for the random hyperparameter search')
+  
+
+  parser.add_argument('-m', '--model', type=str, default='linear',
+    choices=MODELS,
+    help='Model to use for regression')
+  
+  parser.add_argument('--loss', type=str, default='naive-w',
+    choices=LOSSES,
+    help='Loss function to use for optimization')
+
   parser.add_argument('-c', '--checkpoint', type=str)
   args = parser.parse_args()
   
   features = np.vstack([np.load(f) for f in args.features])
-  labels = np.vstack([load_labels(l) for l in args.labels])
+  #labels = np.vstack([load_labels(l) for l in args.labels])
+  labels = [load_labels(l)[33:] for l in args.labels][0]
 
-  X_train, X_test, y_train, y_test = train_test_split(
-    features, labels, train_size=0.8
-  )
+  chunk_size = 59
+  chunks = [labels[x:x+chunk_size] for x in xrange(0, len(labels), chunk_size)][:10]
+
+  val_chunks = [c[:12] for c in chunks]
+  train_chunks = [c[12:47] for c in chunks]
+  test_chunks = [c[47:] for c in chunks]
+
+  # X_train, X_test, y_train, y_test = train_test_split(
+  #   features, labels, train_size=0.8
+  # )
+
+  import matplotlib as mpl
+  from mpl_toolkits.mplot3d import Axes3D
+  import matplotlib.pyplot as plt
+
+  fig = plt.figure()
+  ax = fig.gca(projection='3d')
+
+
+  for vc in val_chunks:
+    ax.plot(vc[:, 0], vc[:, 1], vc[:, 2], color='red')
+
+  for trc in train_chunks:
+    ax.plot(trc[:, 0], trc[:, 1], trc[:, 2], color='blue')
+
+  for tec in test_chunks:
+    ax.plot(tec[:, 0], tec[:, 1], tec[:, 2], color='green')
+
+  ax.legend()
+
+  plt.show()
+
+  return
 
   '''
   if args.checkpoint:

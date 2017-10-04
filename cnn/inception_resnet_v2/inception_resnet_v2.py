@@ -30,8 +30,8 @@ class InceptionResNetV2(object):
     if mode == 'extract':
 
       self.model = Model(
-        inputs=base_model.input, 
-        outputs=[injection_layer.output, base_model.output])
+        inputs=base_model.input,
+        outputs=[base_model.output, injection_layer.output])
     
     elif mode == 'finetune':
 
