@@ -1,15 +1,50 @@
 import tensorflow as tf
 import keras.backend as K
 
+from layers import HomoscedasticLoss
+
 def scope_wrapper(func, *args, **kwargs):
   def scoped_func(*args, **kwargs):
     with tf.name_scope("quat_{}".format(func.__name__)):
       return func(*args, **kwargs)
   return scoped_func
 
+class HomoscedasticPoseLoss(object):
+
+  __name__ = 'abstract_h_pose_loss'
+
+  def __init__(self, **hyperparams):
+
+    self.gamma = hyperparams.get('gamma', -1)
+
+    if self.gamma == 1:
+      self.L_gamma = K.abs
+    elif self.gamma == 2:
+      self.L_gamma = K.square
+    else:
+      raise ValueError('gamma has to be either 1 or 2 (L1 or L2 loss)')
+
+  def __call__(self, y_true, y_pred):
+    return self.loss(y_true, y_pred)
+
+  def loss(self, y_true, y_pred):
+    p_loss = self.position_loss(y_true, y_pred)
+    q_loss = self.quaternion_loss(y_true, y_pred)
+    return p_loss + q_loss   
+
+  def position_loss(self, y_true, y_pred):
+
+    raise NotImplementedError('Position loss has to be implemented!')
+
+  def quaternion_loss(self, y_true, y_pred):
+    raise NotImplementedError('Quaternion loss has to be implemented!')
+
+  def L_gamma_loss(self, y_true, y_pred):
+    return K.mean(self.L_gamma(y_true - y_pred), axis=-1)  
+
 class WeightedPoseLoss(object):
 
-  __name__ = 'abstract_w_pose_loss'
+  __name__ = 'abstract_weighted_pose_loss'
 
   def __init__(self, **hyperparams):
 
@@ -27,9 +62,11 @@ class WeightedPoseLoss(object):
     return self.loss(y_true, y_pred)
 
   def loss(self, y_true, y_pred):
-    p_loss = self.position_loss(y_true, y_pred)
-    q_loss = self.quaternion_loss(y_true, y_pred)
-    return p_loss + q_loss * self.beta    
+    pos_true,  pos_pred  = y_true[..., :3], y_pred[..., :3]
+    quat_true, quat_pred = y_true[..., 3:], y_pred[..., 3:]
+    p_loss = self.position_loss(pos_true, pos_pred)
+    q_loss = self.quaternion_loss(quat_true, quat_pred)
+    return p_loss + q_loss * self.beta
 
   def position_loss(self, y_true, y_pred):
     raise NotImplementedError('Position loss has to be implemented!')
@@ -44,24 +81,20 @@ class NaiveWeightedPoseLoss(WeightedPoseLoss):
 
   __name__ = 'naive_weighted_pose_loss'
 
-  def position_loss(self, y_true, y_pred):
-    pos_true, pos_pred = y_true[..., :3], y_pred[..., :3]
+  def position_loss(self, pos_true, pos_pred):
     return self.L_gamma_loss(pos_true, pos_pred)
 
-  def quaternion_loss(self, y_true, y_pred):
-    quat_true, quat_pred = y_true[..., 3:], y_pred[..., 3:]
+  def quaternion_loss(self, quat_true, quat_pred):
     return self.L_gamma_loss(quat_true, quat_pred)
 
 class QuaternionWeightedPoseLoss(WeightedPoseLoss):
 
   __name__ = 'quaternion_weighted_pose_loss'
 
-  def position_loss(self, y_true, y_pred):
-    pos_true, pos_pred = y_true[..., :3], y_pred[..., :3]
+  def position_loss(self, pos_true, pos_pred):
     return self.L_gamma_loss(pos_true, pos_pred)
 
-  def quaternion_loss(self, y_true, y_pred):
-    quat_true, quat_pred = y_true[..., 3:], y_pred[..., 3:]
+  def quaternion_loss(self, quat_true, quat_pred):
     quat_diff = self.quaternion_mul(quat_true, self.quaternion_conj(quat_pred))
     quat_error = quat_diff[..., :3] * 0.5
     return K.mean(self.L_gamma(quat_error), axis=-1)

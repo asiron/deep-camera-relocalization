@@ -32,19 +32,21 @@ def main():
     help='Dataset on which the CNN model was pretrained')
   parser.add_argument('-p', '--pattern', 
     help='Image grep pattern for looking in images directory')
-  
+  parser.add_argument('-b', '--batch-size', type=int, default=10,
+    help='Batch size for image feature extraction')
+
   args = parser.parse_args()
 
   model = MODELS[args.model](dataset=args.dataset, mode='extract')
   
   input_shape = model.input_shape[:2]
-
   image_pattern = args.pattern or IMAGE_PATTERN
+  preprocess_image_func = lambda img: model.preprocess_image(img)
   image_generator, steps = generate_images(
     args.images, 
-    batch_size=10, 
+    batch_size=args.batch_size, 
     resize=input_shape,
-    func=model.preprocess_image,
+    func=preprocess_image_func,
     pattern=image_pattern
   )
 

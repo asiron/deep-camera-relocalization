@@ -23,8 +23,8 @@ def create_callbacks(output='/tmp', prediction_layers=None,
   @see losses
   '''
 
-  # early_stopper = EarlyStopping(monitor='val_loss', 
-  #  min_delta=1.0, patience=50, verbose=1)
+  early_stopper = EarlyStopping(monitor='val_loss', 
+    min_delta=0.0, patience=50, verbose=1)
 
   lrscheduler = LearningRateScheduler(l_rate_scheduler)
 
@@ -48,9 +48,10 @@ def create_callbacks(output='/tmp', prediction_layers=None,
     period=10
   )
 
-  return [logger, model_checkpoint, lrscheduler]
+  return [logger, model_checkpoint, lrscheduler, early_stopper]
 
 def hyperparam_search(model_class, X, y, config=None, output=None, iters=50):
+#def hyperparam_search(model_class, data_gen, config=None, output=None, iters=50):
 
   if not config:
     raise ValueError('Hyperparam config has to be specified!')
@@ -73,12 +74,15 @@ def hyperparam_search(model_class, X, y, config=None, output=None, iters=50):
     )
 
     X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.25)
+    #X_train, X_val, y_train, y_val = data_gen()
 
     model = model_class(**hyperparams).model
+    model.summary()
+
     model.fit(X_train, y_train, 
       batch_size=128,
       validation_data=(X_val, y_val),
-      epochs=10,
+      epochs=750,
       callbacks=callbacks,
       verbose=True
     )
@@ -123,7 +127,7 @@ def main():
   labels = np.vstack([load_labels(l) for l in args.labels])
 
   X_train, X_test, y_train, y_test = train_test_split(
-    features, labels, train_size=0.8)
+    features, labels, train_size=0.8, random_state=42)
 
   if args.mode == 'initial':
     
@@ -146,6 +150,15 @@ def main():
         finetune_model=load_model(args.finetuning_model),
         topmodel_weights=args.top_model_weights,
         **hyperparams)
+
+  if 'homoscedastic' in args.loss:
+    '''
+    Actual homescedastic loss is implemented in the last layer
+    as it requires trainable parameters. Therefore, labels are fed with
+    dummy data and secondary input is designed for the actual labels.
+    Rerouting of the data happens here.
+    '''
+    pass
 
   hyperparam_search(model_class, X_train, y_train,
     config=hyperparam_config,

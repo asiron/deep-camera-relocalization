@@ -1,8 +1,10 @@
 from keras.layers import Input
 from keras.models import Model, Sequential
 
+from .inception_resnet_v2_base import preprocess_input
 from .inception_resnet_v2_base import InceptionResNetV2 as BaseModel
 
+from ..image_utils.image_utils import scale_image
 class InceptionResNetV2(object):
 
   MODES = ['extract', 'finetune']
@@ -40,10 +42,6 @@ class InceptionResNetV2(object):
       top_model = Model(inputs=top_model_input, outputs=top_model_output)
       self.model = top_model
 
-  @staticmethod
-  def preprocess_image(images):
-    '''
-    Inception ResNet v2 was traing on RGB images
-    so no need to convert
-    '''
-    return images
+  def preprocess_image(self, images):
+    '''Inception ResNet v2 was traing on RGB images so no need to convert'''
+    return scale_image(images)

@@ -19,7 +19,8 @@ def preprocess_image(img, new_height, new_width):
   
   img = scipy.misc.imresize(img, (resized_height, resized_width))
   img = center_crop(img, new_height, new_width)
-  img = scale_img(img)
+  img = img.astype(float)
+  #img = scale_image(img)
   return img
 
 def center_crop(img, new_height, new_width):
@@ -31,11 +32,10 @@ def center_crop(img, new_height, new_width):
   starty = y // 2 - (new_height // 2)    
   return img[starty:starty+new_height, startx:startx+new_width]
 
-def scale_img(img):
+def scale_image(img):
   '''
   Scales images s.t. each pixel is in [-1, 1] range
   '''
-  img = img.astype(float)
   img /= 255.0
   img -= 0.5
   img *= 2

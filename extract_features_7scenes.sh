@@ -1,6 +1,6 @@
 #!/bin/bash
 
-DATASET_DIR="${HOME}/Downloads/7scenes"
+DATASET_DIR="${HOME}/datasets/7scenes"
 
 for dataset in $DATASET_DIR/*/; do
   

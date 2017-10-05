@@ -1,4 +1,5 @@
 import os
+import numpy as np
 
 from .googlenet_layers import LRN
 
@@ -18,9 +19,10 @@ class GoogleNet(object):
     if dataset not in GoogleNet.DATASETS:
       raise ValueError('Must specify a valid dataset!')
 
-    self.input_shape = (224, 224, 3)
-
     weights_dir = os.path.join(os.path.dirname(__file__), dataset)
+
+    self.input_shape = (224, 224, 3)
+    self.bgr_mean_file = np.load(os.path.join(weights_dir, 'meanfile.npy'))
     
     last_inception_block_file = os.path.join(
       weights_dir, '{}_last_inception.h5'.format(dataset))
@@ -42,11 +44,14 @@ class GoogleNet(object):
     elif mode == 'finetune':
       self.model = last_inception_block
 
-  @staticmethod
-  def preprocess_image(img):
+  def preprocess_image(self, images):
     '''
-    Assumes that img are in RGB and converts to BGR
-    '''
-    img[...,[0,1,2]] = img[...,[2,1,0]]
-    return img
+    Assumes that images are in RGB and converts to BGR, then subtracts the mean
+    No scaling to [0,1] range is required as the models were trained using Caffe
+    '''    
+    images = images[::-1, ...]
+    images[..., 0] -= self.bgr_mean_file[0]
+    images[..., 1] -= self.bgr_mean_file[1]
+    images[..., 2] -= self.bgr_mean_file[2]
+    return images
 

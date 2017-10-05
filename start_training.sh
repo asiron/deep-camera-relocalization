@@ -1,6 +1,6 @@
 #!/bin/bash
 
-COMMAND="bash train_simple_cnn_regressor.sh"
+COMMAND="bash train.sh"
 CHECK=$(ps aux | grep "${COMMAND}" | wc -l)
 
 if [[ $CHECK -ne 2 ]]; then
