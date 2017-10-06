@@ -9,14 +9,17 @@ DATE=`date +"%m_%d_%Y--%H-%M-%S"`
 
 DATASET_DIR="../../datasets/wing"
 
-LABELS=(
+TRAIN_LABELS=(
   "${DATASET_DIR}/position00/seq00/labels"
+)
+
+VALID_LABELS=(
   "${DATASET_DIR}/position01/seq00/labels"
 )
 
 HYPERPARAM_CONFIG="configs.hyperparam_initial_config"
 
-ITERS=30
+ITERS=15
 MODE=initial
 TOP_MODEL_TYPE=regressor
 
@@ -28,17 +31,23 @@ NETS=(
 
 for net in "${NETS[@]}"; do 
   IFS=',' read arch dataset <<< "${net}"
-  features=(
+  
+  train_features=(
     "${DATASET_DIR}/position00/seq00/extracted_features/${arch}/${dataset}/cnn_features.npy"
+  )
+  valid_features=(
     "${DATASET_DIR}/position01/seq00/extracted_features/${arch}/${dataset}/cnn_features.npy"
   )
+
   for loss in naive_weighted quaternion_weighted; do 
     OUTPUT_DIR="/media/labuser/Seagate Expansion Drive/experiments/results"
     OUTPUT_DIR="${OUTPUT_DIR}/${MODE}-${TOP_MODEL_TYPE}-${loss}-${arch}-${dataset}/${DATE}"
     for i in `seq $ITERS`; do
       python train.py \
-        -l "${LABELS[@]}" \
-        -f "${features[@]}" \
+        -tl "${TRAIN_LABELS[@]}" \
+        -tf "${train_features[@]}" \
+        -vl "${VALID_LABELS[@]}" \
+        -vf "${valid_features[@]}" \
         -o "${OUTPUT_DIR}" \
         --mode "${MODE}" \
         --top-model-type "${TOP_MODEL_TYPE}" \

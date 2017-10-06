@@ -50,7 +50,8 @@ def create_callbacks(output='/tmp', prediction_layers=None,
 
   return [logger, model_checkpoint, lrscheduler, early_stopper]
 
-def hyperparam_search(model_class, X, y, config=None, output=None, iters=50):
+def hyperparam_search(model_class, X_train, y_train, X_val, y_val,
+  config=None, output=None, iters=50):
 #def hyperparam_search(model_class, data_gen, config=None, output=None, iters=50):
 
   if not config:
@@ -73,7 +74,7 @@ def hyperparam_search(model_class, X, y, config=None, output=None, iters=50):
       l_rate_scheduler=l_rate_scheduler
     )
 
-    X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.25)
+    #X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.25)
     #X_train, X_val, y_train, y_val = data_gen()
 
     model = model_class(**hyperparams).model
@@ -90,10 +91,16 @@ def hyperparam_search(model_class, X, y, config=None, output=None, iters=50):
 def main():
   parser = argparse.ArgumentParser()
   
-  parser.add_argument('-l', '--labels', nargs='+', required=True, 
-    help='Path to a directory with labels')
-  parser.add_argument('-f', '--features', nargs='+', required=True,
-    help='Path to a numpy array with features')
+  parser.add_argument('-tl', '--train-labels', nargs='+', required=True, 
+    help='Path to a directory with training labels')
+  parser.add_argument('-tf', '--train-features', nargs='+', required=True,
+    help='Path to a numpy array with training features')
+
+  parser.add_argument('-vl', '--val-labels', nargs='+', required=True, 
+    help='Path to a directory with validation labels')
+  parser.add_argument('-vf', '--val-features', nargs='+', required=True,
+    help='Path to a numpy array with validation features')
+
   parser.add_argument('-o', '--output', required=True, 
     help='Path to an output dir with tensorboard logs, csv, checkpoints, etc')
  
@@ -123,17 +130,18 @@ def main():
   args = parser.parse_args()
   
   hyperparam_config = importlib.import_module(args.hyperparam_config)
-  features = np.vstack([np.load(f) for f in args.features])
-  labels = np.vstack([load_labels(l) for l in args.labels])
+  
+  train_features = np.vstack([np.load(f) for f in args.train_features])
+  train_labels = np.vstack([load_labels(l) for l in args.train_labels])
 
-  X_train, X_test, y_train, y_test = train_test_split(
-    features, labels, train_size=0.8, random_state=42)
+  val_features = np.vstack([np.load(f) for f in args.val_features])
+  val_labels = np.vstack([load_labels(l) for l in args.val_labels])
 
   if args.mode == 'initial':
     
     def model_class(**hyperparams):
       return pose_model.PoseModel(
-        input_shape=(features.shape[1],),
+        input_shape=(train_features.shape[1],),
         top_model_type=args.top_model_type,
         model_loss=args.loss,
         mode=args.mode,
@@ -160,7 +168,8 @@ def main():
     '''
     pass
 
-  hyperparam_search(model_class, X_train, y_train,
+  hyperparam_search(model_class, train_features, train_labels,
+    val_features, val_labels,
     config=hyperparam_config,
     output=args.output, 
     iters=args.iters)
