@@ -96,8 +96,10 @@ class QuaternionWeightedPoseLoss(WeightedPoseLoss):
 
   def quaternion_loss(self, quat_true, quat_pred):
     quat_diff = self.quaternion_mul(quat_true, self.quaternion_conj(quat_pred))
-    quat_error = quat_diff[..., :3] * 0.5
-    return K.mean(self.L_gamma(quat_error), axis=-1)
+    xyz, w = quat_diff[..., :3], quat_diff[..., 3]
+    return K.abs(2 * tf.atan2(tf.norm(xyz, axis=-1), w))
+    #quat_error = quat_diff[..., :3] * 0.5
+    #return K.mean(self.L_gamma(quat_error), axis=-1)
 
   @scope_wrapper
   def quaternion_mul(self, q1, q2):
