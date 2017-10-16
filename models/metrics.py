@@ -92,8 +92,8 @@ class PoseMetrics(object):
 
   @staticmethod
   def abs_errors_orienation(y_true, y_pred):
-    quat_true = quaternion.as_quat_array(y_true[..., 3:].copy())
-    quat_pred = quaternion.as_quat_array(y_pred[..., 3:].copy())
+    quat_true = quaternion.as_quat_array(y_true[..., [6,3,4,5]].copy())
+    quat_pred = quaternion.as_quat_array(y_pred[..., [6,3,4,5]].copy())
     errors = (quat_true * quat_pred.conjugate())
     angles = np.degrees([q.angle() for q in errors])
     return np.abs(np.where(angles > 180.0, angles - 360.0, angles))

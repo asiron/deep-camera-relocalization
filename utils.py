@@ -43,16 +43,8 @@ def load_labels(directory, pattern=LABEL_PATTERN):
       labels.append(pose)
   return np.array(labels)
 
-def generate_images(directory, batch_size=10, 
-  resize=(299, 299), func=lambda x: x, pattern=IMAGE_PATTERN):
-  '''
-  Generator, which yields processed images in batches from a directory
-  Preprocesing does the following:
-    resizes image to a given dimensions with a center crop
-    scales image s.t each pixel is in [-1, 1] range
-    applies a function at the end if any is given
-  '''
-  image_filenames = find_files(directory, pattern)
+def generate_images_from_filenames(image_filenames, batch_size=10, 
+  resize=(299,299), func=lambda x: x):
 
   def generator():
     process_file = lambda f: func(load_and_process(f, resize))
@@ -68,20 +60,51 @@ def generate_images(directory, batch_size=10,
   steps = len(image_filenames) / float(batch_size)
   return generator(), int(np.ceil(steps))
 
+def generate_images(directory, batch_size=10, 
+  resize=(299, 299), func=lambda x: x, pattern=IMAGE_PATTERN):
+  '''
+  Generator, which yields processed images in batches from a directory
+  Preprocesing does the following:
+    resizes image to a given dimensions with a center crop
+    scales image s.t each pixel is in [-1, 1] range
+    applies a function at the end if any is given
+  '''
+  image_filenames = find_files(directory, pattern)
+  return generate_images_from_filenames(image_filenames, batch_size=batch_size,
+    resize=resize, func=func)
+
+def make_sequences(Xs, Ys, seqlen, step = 1):
+  Xseq, Yseq = [], []
+  for i in xrange(0, Xs.shape[0]-seqlen+1, step):
+    Xseq.append(Xs[i: i+seqlen])
+    Yseq.append(Ys[i: i+seqlen])
+  return np.array(Xseq), np.array(Yseq)
+
+def search_layer(model, layer_name):
+  found_layer = None
+  for m in (l for l in model.layers if type(l) is Model):
+    l = search_layer(m, layer_name)
+    if l and l.name == layer_name:
+      return l
+
+  ll = [l for l in model.layers if l.name == layer_name]
+  return ll[0] if len(ll) == 1 else None 
+
 class ExtendedLogger(Callback):
 
   val_data_metrics = {}
 
-  def __init__(self, prediction_layers, csv_dir='./csv', tb_dir='./tensorboard'):
+  def __init__(self, prediction_layer, csv_dir='./csv', tb_dir='./tensorboard'):
     super(ExtendedLogger, self).__init__()
     make_dir(csv_dir)
     make_dir(tb_dir)
     self.csv_logger = CSVLogger(os.path.join(csv_dir, 'run.csv'))
-    self.tensorboard = TensorBoard(log_dir=tb_dir, write_graph=True)
+    self.tensorboard = TensorBoard(log_dir=tb_dir, 
+      write_graph=True, 
+      #write_grads=True,
+      histogram_freq=30)
 
-    self.prediction_layers = prediction_layers
-    if not isinstance(prediction_layers, list):
-      self.prediction_layers = [prediction_layers]
+    self.prediction_layer = prediction_layer
 
   def set_params(self, params):
     super(ExtendedLogger, self).set_params(params)
@@ -116,18 +139,23 @@ class ExtendedLogger(Callback):
   def on_epoch_end(self, epoch, logs=None):
 
     with timeit('metrics'):
-      outputs = [self.model.get_layer(l).output for l in self.prediction_layers]
+      
+      outputs = self.model.get_layer(self.prediction_layer).output
       self.prediction_model = Model(inputs=self.model.input, outputs=outputs)
 
       batch_size = self.params['batch_size']
 
-      y_true = self.validation_data[1]
-      y_pred = self.prediction_model.predict(
-        self.validation_data[0], batch_size=batch_size, verbose=1)
+      val_data = self.validation_data[:-2]
+      y_true = val_data[1]
+      y_pred = self.prediction_model.predict(val_data[:-1], 
+        batch_size=batch_size, verbose=1)
 
       new_logs = {name: np.array(metric(y_true, y_pred))
         for name, metric in self.val_data_metrics.items()}
       logs.update(new_logs)
+
+      self.tensorboard.validation_data = self.validation_data
+      self.csv_logger.validation_data = self.validation_data
 
       self.csv_logger.on_epoch_end(epoch, logs=logs)
       self.tensorboard.on_epoch_end(epoch, logs=logs)

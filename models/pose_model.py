@@ -1,7 +1,8 @@
-from keras.models import Sequential
-from keras.optimizers import Adam
+from keras.models import Sequential, Model
+from keras.optimizers import Adam, SGD
+from keras.layers import Input, Add, Lambda, TimeDistributed
 
-import regressor, lstm, losses
+import regressor, lstm, losses, layers
 
 TOPMODELS = {
   'lstm'      : lstm.LSTM,
@@ -42,32 +43,63 @@ class PoseModel(object):
 
     if mode == 'initial' and not input_shape:
       raise ValueError('Input shape has to specified during initial training')
-
-
+    
+    self.hyperparams = hyperparams
     self.top_model_type = top_model_type
     self.model_loss = model_loss
     self.mode = mode
-
-    self.hyperparams = hyperparams
 
     top_model_class = TOPMODELS[self.top_model_type]
 
     if self.mode == 'initial':
 
-      self.input_shape = input_shape
-      self.model = top_model_class(self.input_shape, **self.hyperparams).model
+      main_input = Input(shape=input_shape) 
+      top_model_builder = top_model_class(**self.hyperparams)
+      top_model_output = top_model_builder.build(main_input)
 
     elif self.mode == 'finetune':
 
-      self.input_shape = self.finetune_model.output_shape
-      top_model = top_model_class(self.input_shape, **self.hyperparams).model
-      top_model.load_weights(self.topmodel_weights)
+      main_input_shape = finetune_model.input_shape[1:]
+      main_input = Input(shape=main_input_shape)
+      finetune_output = finetune_model(main_input)
 
-      self.model = Sequential()
-      self.model.add(self.finetune_model)
-      self.model.add(top_model)
+      top_model_input_shape = (finetune_model.output_shape[1],)
+      top_model_builder = top_model_class(**self.hyperparams)
+      top_model_output = top_model_builder.build(finetune_output)
 
-    loss = losses.LOSSES[self.model_loss](**self.hyperparams)
+    if 'homoscedastic' in self.model_loss:
+      '''Adding Homoscedastic Loss as last layers to the model'''
+      
+      labels_input = Input(name='labels_input', shape=[7])
+      pq_losses = losses.LOSSES[self.model_loss](name='pq_losses',
+        **hyperparams)([top_model_output, labels_input])
+
+      p_loss = Lambda(lambda x: x[..., 0])(pq_losses)
+      q_loss = Lambda(lambda x: x[..., 1])(pq_losses)
+      p_loss = layers.HomoscedasticLoss(0,  name='homo_pos_loss')(p_loss)
+      q_loss = layers.HomoscedasticLoss(-3, name='homo_quat_loss')(q_loss)
+      loss_output = Add()([p_loss, q_loss])
+
+      self.model = Model(inputs=[main_input, labels_input], outputs=loss_output)
+      loss = lambda y_true, y_pred: y_pred
+
+    else:
+      self.model = Model(inputs=[main_input], outputs=top_model_output)
+      loss = losses.LOSSES[self.model_loss](**self.hyperparams)
+
+    #weights_before = self.model.get_layer('dense_1').get_weights()
+    #if self.mode == 'finetune':
+    #  self.model.load_weights(topmodel_weights, by_name=True)
+    
+    #weights_after = self.model.get_layer('dense_1').get_weights()
+
+    #optimizer = SGD(lr=self.hyperparams['l_rate'], momentum=0.9)
     optimizer = Adam(lr=self.hyperparams['l_rate'])
     self.model.compile(optimizer=optimizer, loss=loss)
     self.model.summary()
+
+    #weights_compiled = self.model.get_layer('dense_1').get_weights()
+
+    # print weights_before
+    # print weights_after
+    # print weights_compiled

@@ -1,6 +1,6 @@
 
 from keras.models import Model
-from keras.layers import Dropout, Dense, Input
+from keras.layers import Dropout, Dense, Input, LSTM, TimeDistributed
 from keras.optimizers import Adam
 from keras.regularizers import l2
 
@@ -8,43 +8,20 @@ from .layers import QuaternionNormalization
 
 class LSTM(object):
 
-  def __init__(self, input_shape, **kwargs):
-    pass
-    # self.kwargs = kwargs
+  def __init__(self, **kwargs):
 
-    # inputs = Input(shape=input_shape)
+    self.kwargs = kwargs
+    #self.input = Input(shape=input_shape)
 
-    # x = Dense(input_shape,
-    #   activation='relu', 
-    #   W_regularizer=l2(self.kwargs['l2_regu']))(inputs)
-    # x = Dropout(self.kwargs['dropout'])(x)
-    # pos, quat = Dense(3)(x), Dense(4)(x)
-    # quat = QuaternionNormalization(quat, name='quat_norm')
+  def build(self, input_tensor):
 
-    # self.model = Model(inputs=inputs, outputs=[pos, quat])
+    input_shape = int(input_tensor.shape[1])
 
-
-
-  #   self.optimizer = Adam(lr=self.kwargs['l_rate'])
-
-  # def build(self):
-  #   raise NotImplementedError('build method must be implemented in subclass!')
-
-# class NaiveWeightedLinearRegression(WeightedLinearRegression):
-
-#   def build(self):
-#     loss = NaiveWeightedPoseLoss(
-#       beta=self.kwargs['beta'],
-#       gamma=self.kwargs['gamma'])
-#     self.model.compile(optimizer=self.optimizer, loss=loss)
-#     self.model.summary()
-#     return self.model
-
-# class ProperWeightedLinearRegression(WeightedLinearRegression):
-
-#   def build(self):
-#     loss = ProperWeightedPoseLoss(
-#       beta=self.kwargs['beta'],
-#       gamma=self.kwargs['gamma'])
-#     self.model.compile(optimizer=self.optimizer, loss=loss)
-#     return self.model
+    lstm1 = LSTM(input_shape, return_sequences=True)(input_tensor)
+    #lstm2 = LSTM(int(input_tensor.shape[1]), return_sequences=True)(lstm1)
+    #lstm2 = LSTM(int(input_tensor.shape[1]), return_sequences=True)(lstm1)
+    dense_1   = TimeDistributed(Dense(input_shape, activation='relu'))(lstm1)
+    dropout_1 = TimeDistributed(Dropout(self.kwargs['dropout']))(dense_1)
+    dense_2   = TimeDistributed(Dense(7))(dropout_1)
+    quat_norm = TimeDistributed(QuaternionNormalization(name='quat_norm'))(dense_2)
+    return quat_norm

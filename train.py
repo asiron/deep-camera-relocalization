@@ -8,13 +8,23 @@ from keras.callbacks import (
   EarlyStopping
 )
 
-from utils import make_dir, load_labels, ExtendedLogger
+from keras.models import load_model
+
+from utils import make_dir, load_labels, ExtendedLogger, make_sequences
 from sklearn.model_selection import train_test_split
 
 from models import pose_model, losses, metrics
 
-def create_callbacks(output='/tmp', prediction_layers=None, 
-  run_identifier=None, l_rate_scheduler=None):
+from cnn.googlenet.googlenet import GoogleNet
+from cnn.inception_resnet_v2.inception_resnet_v2 import InceptionResNetV2
+
+FINETUNING_MODELS = {
+  'googlenet' : GoogleNet,
+  'inception_resnet_v2' : InceptionResNetV2
+}
+
+def create_callbacks(output='/tmp', prediction_layer=None, 
+  run_identifier=None, l_rate_scheduler=None, save_period=1):
   '''
   Custom logger runs prediction at the end of a training epoch 
   for the validationdataset. In order to retrieve the prediction 
@@ -22,37 +32,39 @@ def create_callbacks(output='/tmp', prediction_layers=None,
   This allows for custom loss functions with trainable parameters.
   @see losses
   '''
-
   early_stopper = EarlyStopping(monitor='val_loss', 
-    min_delta=0.0, patience=50, verbose=1)
+    min_delta=0.0, patience=10, verbose=1)
 
   lrscheduler = LearningRateScheduler(l_rate_scheduler)
 
   tb_directory  = os.path.join(output, 'tensorboard', run_identifier)
   csv_directory = os.path.join(output, 'csv', run_identifier)
 
-  logger = ExtendedLogger(prediction_layers,
+  logger = ExtendedLogger(prediction_layer,
     csv_dir=csv_directory, tb_dir=tb_directory)
   logger.add_validation_metrics(metrics.PoseMetrics.get_all_metrics())
 
   mc_directory = os.path.join(
     output,
     'checkpoints',
-    run_identifier,
-    'weights.{epoch:04d}-{val_loss:.4f}.hdf5'
+    run_identifier
   )
   make_dir(mc_directory)
+  checkpoint_pattern = 'weights.{epoch:04d}-{val_loss:.4f}.hdf5'
+  checkpoint_path = os.path.join(mc_directory, checkpoint_pattern)
   model_checkpoint = ModelCheckpoint(
-    mc_directory, 
+    checkpoint_path,
+    save_weights_only=True,
     save_best_only=True,
-    period=10
+    period=save_period
   )
 
   return [logger, model_checkpoint, lrscheduler, early_stopper]
+  #return [logger, model_checkpoint, lrscheduler]
 
 def hyperparam_search(model_class, X_train, y_train, X_val, y_val,
-  config=None, output=None, iters=50):
-#def hyperparam_search(model_class, data_gen, config=None, output=None, iters=50):
+  config=None, output=None, iters=50, save_period=1, epochs=1000,
+  batch_size=128):
 
   if not config:
     raise ValueError('Hyperparam config has to be specified!')
@@ -66,24 +78,24 @@ def hyperparam_search(model_class, X_train, y_train, X_val, y_val,
     hyperparams = {var: gen() for var, gen in hyperparameter_space.items()}
     hyperparam_desc = config.desc.format(**hyperparams)
 
-    l_rate_scheduler = config.make_l_rate_scheduler(hyperparams['l_rate'])
+    l_rate_scheduler = config.make_l_rate_scheduler(
+      hyperparams['l_rate'],
+      hyperparams['decay'])
 
     callbacks = create_callbacks(output=output, 
-      prediction_layers='quat_norm', 
+      prediction_layer='quat_norm', 
       run_identifier=hyperparam_desc,
-      l_rate_scheduler=l_rate_scheduler
+      l_rate_scheduler=l_rate_scheduler,
+      save_period=save_period
     )
-
-    #X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.25)
-    #X_train, X_val, y_train, y_val = data_gen()
 
     model = model_class(**hyperparams).model
     model.summary()
 
     model.fit(X_train, y_train, 
-      batch_size=128,
+      batch_size=batch_size,
       validation_data=(X_val, y_val),
-      epochs=750,
+      epochs=epochs,
       callbacks=callbacks,
       verbose=True
     )
@@ -108,14 +120,20 @@ def main():
   parser.add_argument('-m', '--mode', default='initial',
     choices=pose_model.PoseModel.MODES,
     help='Training mode, initial or finetuning')
+  
   parser.add_argument('--top-model-weights',
     help='Top-model\'s weights for finetuning')
-  parser.add_argument('--finetuning-model',
-    help='Keras model for finetuning (excluding top model part)')
+  parser.add_argument('--finetuning-model-arch', choices=['googlenet', 'inception_resnet_v2'],
+    help='Model architecture for finetuning')
+  parser.add_argument('--finetuning-model-dataset', choices=['places365', 'imagenet'],
+    help='Dataset on which finetuning model was pretrained ')
 
   parser.add_argument('-tm', '--top-model-type', default='regressor',
     choices=pose_model.TOPMODELS.keys(),
     help='Top model to use for regression')
+  parser.add_argument('--seq-len', type=int,
+    help='If top-model-type is set to \'lstm\', then seq-len has to be specified!')
+
   parser.add_argument('--loss', default='naive_weighted',
     choices=losses.LOSSES.keys(),
     help='Loss function to use for optimization')
@@ -124,24 +142,64 @@ def main():
 
   parser.add_argument('-i', '--iters', type=int, default=50,
     help='Number of iterations for the random hyperparameter search')
+  parser.add_argument('-e', '--epochs', type=int, default=1000,
+    help='Number of epochs per iteration')
+  parser.add_argument('-bs', '--batch-size', type=int, default=128,
+    help='Batch size')
+  parser.add_argument('-s', '--save-period', type=int, default=1,
+    help='Number of epochs to save a checkpoint')
 
   #parser.add_argument('-c', '--checkpoint', type=str)
   
   args = parser.parse_args()
-  
+
   hyperparam_config = importlib.import_module(args.hyperparam_config)
   
-  train_features = np.vstack([np.load(f) for f in args.train_features])
-  train_labels = np.vstack([load_labels(l) for l in args.train_labels])
 
-  val_features = np.vstack([np.load(f) for f in args.val_features])
-  val_labels = np.vstack([load_labels(l) for l in args.val_labels])
 
-  if args.mode == 'initial':
-    
+  train_features_arr = [np.squeeze(np.load(f)) for f in args.train_features]
+  train_labels_arr   = [load_labels(l) for l in args.train_labels]
+
+  val_features_arr = [np.squeeze(np.load(f)) for f in args.val_features]
+  val_labels_arr   = [load_labels(l) for l in args.val_labels]
+
+  if args.top_model_type == 'lstm':
+    '''Make sequences here'''
+    if not args.seq_len:
+      raise ValueError('Sequence length has to be defined in LSTM mode!')
+
+
+    # train_features, train_labels = [], []
+    # val_features, val_labels = [], []
+
+    # for train_f, train_l in zip(train_features_arr, train_labels_arr):
+    #   tf_seq, tl_seq = make_sequences(train_f, train_l, args.seq_len)
+    #   train_features.append(tf_seq)
+    #   train_labels.append(tl_seq)
+
+    # for val_f, val_l in zip(val_features_arr, val_labels_arr):
+    #   vf_seq, vl_seq = make_sequences(val_f, val_l, args.seq_len)
+    #   val_features.append(vf_seq)
+    #   val_labels.append(vl_seq)
+ 
+  train_features = np.concatenate(train_features)
+  train_labels = np.concatenate(train_labels)
+  #train_labels = train_labels[..., [0,1,2,4,5,6,3]]
+
+  val_features = np.concatenate(val_features)
+  val_labels   = np.concatenate(val_labels)
+  #val_labels = val_labels[..., [0,1,2,4,5,6,3]]
+
+  print train_features.shape, train_labels.shape
+  print val_features.shape, val_labels.shape
+  return                                                                                                                                                                                                                                                                                                                                                                                  
+
+
+  if args.mode == 'initial': 
+    input_shape = train_features.shape[1]
     def model_class(**hyperparams):
       return pose_model.PoseModel(
-        input_shape=(train_features.shape[1],),
+        input_shape=(input_shape,),
         top_model_type=args.top_model_type,
         model_loss=args.loss,
         mode=args.mode,
@@ -149,13 +207,20 @@ def main():
 
   elif args.mode == 'finetune':
 
+    finetuning_model_arch = args.finetuning_model_arch
+    finetuning_model_dataset = args.finetuning_model_dataset
+
+    finetuning_model_class = FINETUNING_MODELS[finetuning_model_arch]
+    finetuning_model = finetuning_model_class(
+      dataset=finetuning_model_dataset, mode='finetune').model
+
     def model_class(**hyperparams):
       return pose_model.PoseModel(
         input_shape=None,
         top_model_type=args.top_model_type,
         model_loss=args.loss,
         mode=args.mode,
-        finetune_model=load_model(args.finetuning_model),
+        finetune_model=finetuning_model,
         topmodel_weights=args.top_model_weights,
         **hyperparams)
 
@@ -163,16 +228,25 @@ def main():
     '''
     Actual homescedastic loss is implemented in the last layer
     as it requires trainable parameters. Therefore, labels are fed with
-    dummy data and secondary input is designed for the actual labels.
+    dummy data and secondary input is designated for the actual labels.
     Rerouting of the data happens here.
     '''
-    pass
+    #train_features = [train_labels, train_features]
+    train_features = [train_features, train_labels]
+    train_labels = np.zeros(train_labels.shape)
+
+    #val_features = [val_labels, val_features]
+    val_features = [val_features, val_labels]
+    val_labels = np.zeros(val_labels.shape)
 
   hyperparam_search(model_class, train_features, train_labels,
     val_features, val_labels,
     config=hyperparam_config,
     output=args.output, 
-    iters=args.iters)
+    iters=args.iters,
+    epochs=args.epochs,
+    save_period=args.save_period,
+    batch_size=args.batch_size)
 
   '''
   #labels = np.vstack([load_labels(l) for l in args.labels])
