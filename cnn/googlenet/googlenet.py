@@ -3,15 +3,15 @@ import numpy as np
 
 from .googlenet_layers import LRN
 
-from keras.layers import GlobalAveragePooling2D
-from keras.models import Model, load_model, Sequential
+from keras.layers import Input
+from keras.models import Model, load_model, Model
 
 class GoogleNet(object):
 
   MODES = ['extract', 'finetune']
-  DATASETS = ['imagenet', 'places365']
+  DATASETS = ['imagenet', 'places365', 'places205']
 
-  def __init__(self, dataset=None, mode=None):
+  def __init__(self, dataset=None, mode=None, meanfile=None):
 
     if mode not in GoogleNet.MODES:
       raise ValueError('Must specify a valid mode!')
@@ -19,10 +19,15 @@ class GoogleNet(object):
     if dataset not in GoogleNet.DATASETS:
       raise ValueError('Must specify a valid dataset!')
 
+    if mode == 'extract' and not meanfile:
+      raise ValueError('Must specify a valid meanfile!')
+
+    if meanfile:
+      self.rgb_mean_file = np.load(meanfile)
+
     weights_dir = os.path.join(os.path.dirname(__file__), dataset)
 
     self.input_shape = (224, 224, 3)
-    self.bgr_mean_file = np.load(os.path.join(weights_dir, 'meanfile.npy'))
     
     last_inception_block_file = os.path.join(
       weights_dir, '{}_last_inception.h5'.format(dataset))
@@ -34,24 +39,27 @@ class GoogleNet(object):
         weights_dir, '{}_base.h5'.format(dataset))
       googlenet_base = load_model(googlenet_base_file, custom_objects={'LRN': LRN})
 
-      model = Sequential()
-      model.add(googlenet_base)
-      model.add(last_inception_block)
+      input_layer = Input(shape=self.input_shape, name='extract_input')
 
-      self.model = Model(inputs=googlenet_base.input,
-        outputs=[model.output, googlenet_base.output])
+      base = googlenet_base(input_layer)
+      heads = last_inception_block(base)
+
+      if isinstance(heads, list):
+        outputs = [heads[0], heads[1], heads[2], base]
+      else:
+        outputs = [heads, base]
+        
+      self.model = Model(inputs=input_layer, outputs=outputs)
 
     elif mode == 'finetune':
       self.model = last_inception_block
 
-  def preprocess_image(self, images):
+  def preprocess_image(self, image):
     '''
-    Assumes that images are in RGB and converts to BGR, then subtracts the mean
+    Subtracts the mean and converts from RGB to BGR
     No scaling to [0,1] range is required as the models were trained using Caffe
     '''    
-    images = images[::-1, ...]
-    images[..., 0] -= self.bgr_mean_file[0]
-    images[..., 1] -= self.bgr_mean_file[1]
-    images[..., 2] -= self.bgr_mean_file[2]
-    return images
+    image -= self.rgb_mean_file
+    image = image[..., ::-1]
+    return image
 

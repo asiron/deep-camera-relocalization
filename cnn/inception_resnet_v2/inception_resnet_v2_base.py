@@ -309,6 +309,8 @@ def InceptionResNetV2(include_top=True,
     branches = [branch_0, branch_1, branch_2, branch_pool]
     x = Concatenate(axis=channel_axis, name='mixed_7a')(branches)
 
+    x = Lambda(lambda t: t, name='before_last_conv_passthrough')(x)
+
     # 10x block8 (Inception-ResNet-C block): 8 x 8 x 2080
     for block_idx in range(1, 10):
         x = inception_resnet_block(x,
@@ -320,8 +322,6 @@ def InceptionResNetV2(include_top=True,
                                activation=None,
                                block_type='block8',
                                block_idx=10)
-
-    x = Lambda(lambda t: t, name='before_last_conv_passthrough')(x)
 
     # Final convolution block: 8 x 8 x 1536
     x = conv2d_bn(x, 1536, 1, name='conv_7b')
