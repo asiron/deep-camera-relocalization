@@ -1,21 +1,24 @@
 #!/bin/bash
 
-DATASET_DIR="../../datasets/wing/"
+DATASET_DIR="${HOME}/datasets/wing"
 
-SET00="${DATASET_DIR}/position00/seq00"
-SET01="${DATASET_DIR}/position01/seq00"
+for position in $DATASET_DIR/position_*/; do
+  
+  echo 'Processing : ' $position
+  for seq in $position/t*/seq_*/; do
 
-python extract_features.py -m googlenet -d places365 \
-  "${SET01}/images" "${SET01}/extracted_features/googlenet/places365"
-python extract_features.py -m googlenet -d places365 \
- "${SET00}/images" "${SET00}/extracted_features/googlenet/places365"
+    echo -e '\tProcessing sequence:' $seq
 
-python extract_features.py -m googlenet -d imagenet \
-  "${SET00}/images" "${SET00}/extracted_features/googlenet/imagenet"
-python extract_features.py -m googlenet -d imagenet \
-  "${SET01}/images" "${SET01}/extracted_features/googlenet/imagenet"
+    python extract_features.py -m googlenet -d places365 --batch-size 128 \
+     --meanfile $DATASET_DIR/meanfiles/224/meanfile.npy \
+      "${seq}/images" "${seq}/extracted_features/googlenet/places365"
 
-python extract_features.py -m inception_resnet_v2 -d imagenet \
-  "${SET00}/images" "${SET00}/extracted_features/inception_resnet_v2/imagenet"
-python extract_features.py -m inception_resnet_v2 -d imagenet \
-  "${SET01}/images" "${SET01}/extracted_features/inception_resnet_v2/imagenet"
+    # python extract_features.py -m inception_resnet_v2 -d imagenet \
+    #   "${seq}/images" "${seq}/extracted_features/inception_resnet_v2/imagenet"
+
+    # python extract_features.py -m googlenet -d imagenet \
+    #   "${seq}/images" "${seq}/extracted_features/googlenet/imagenet"
+
+
+  done
+done
