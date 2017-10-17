@@ -1,11 +1,10 @@
-#!/usr/bin/env
 import argparse, os
 import numpy as np
+
 from tqdm import tqdm
-
-from utils import generate_images_from_filenames, make_dir
-
 from itertools import takewhile
+
+from ..utils import generate_images_from_filenames, make_dir
 
 def main():
   parser = argparse.ArgumentParser()

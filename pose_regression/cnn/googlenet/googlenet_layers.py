@@ -1,5 +1,6 @@
-import tensorflow as tf
 from keras.layers import Layer
+
+import tensorflow as tf
 
 class LRN(Layer):
 

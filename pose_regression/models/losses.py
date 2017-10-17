@@ -82,10 +82,14 @@ class QuaternionAnglePoseLoss(PoseLoss):
 
   def quaternion_loss(self, quat_true, quat_pred):
     quat_diff = quaternion_mul(quat_true, quaternion_conj(quat_pred))
+    quat_diff = K.clip(quat_diff, -1.0, 1.0)
     xyz, w = quat_diff[..., :3], quat_diff[..., 3]
-    return K.abs(2*tf.atan2(tf.norm(xyz, axis=-1), w))
+    #w = quat_diff[..., 3]
+    #angle = 2 * tf.acos(K.abs(w))
+    angle = 2 * tf.atan2(tf.norm(xyz, axis=-1), K.abs(w))
+    return angle ** 2 if self.gamma == 2 else K.abs(angle)
 
-class WeightedPoseLoss(object):
+class WeightedPoseLoss(object): 
 
   __name__ = 'abstract_weighted_pose_loss'
 

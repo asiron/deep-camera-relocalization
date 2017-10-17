@@ -1,9 +1,9 @@
 #!/bin/bash
 
-export CUDA_PATH=/usr/local/cuda-8.0/bin
-export PATH=${CUDA_PATH}${PATH:+:${PATH}}
-export LOCAL_CUDNN_PATH=~/cudnn/
-export LD_LIBRARY_PATH=$LOCAL_CUDNN_PATH/cuda/lib64:$LD_LIBRARY_PATH
+# export CUDA_PATH=/usr/local/cuda-8.0/bin
+# export PATH=${CUDA_PATH}${PATH:+:${PATH}}
+# export LOCAL_CUDNN_PATH=~/cudnn/
+# export LD_LIBRARY_PATH=$LOCAL_CUDNN_PATH/cuda/lib64:$LD_LIBRARY_PATH
 
 DATE=`date +"%m_%d_%Y--%H-%M-%S"`
 

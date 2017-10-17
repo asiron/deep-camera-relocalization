@@ -1,6 +1,7 @@
 from keras.layers import Lambda
 from keras.engine.topology import Layer
 from keras.initializers import Constant
+
 import keras.backend as K
 
 class QuaternionNormalization(Lambda):

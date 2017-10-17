@@ -1,8 +1,5 @@
-import numpy as np
 import quaternion 
-
-from itertools import izip
-#from functools32 import lru_cache
+import numpy as np
 
 class PoseMetrics(object):
 
@@ -90,10 +87,21 @@ class PoseMetrics(object):
     pos_true, pos_pred = y_true[..., :3], y_pred[..., :3]
     return np.linalg.norm(pos_true - pos_pred, axis=-1)
 
+
   @staticmethod
   def abs_errors_orienation(y_true, y_pred):
     quat_true = quaternion.as_quat_array(y_true[..., [6,3,4,5]].copy())
     quat_pred = quaternion.as_quat_array(y_pred[..., [6,3,4,5]].copy())
     errors = (quat_true * quat_pred.conjugate())
-    angles = np.degrees([q.angle() for q in errors])
-    return np.abs(np.where(angles > 180.0, angles - 360.0, angles))
+    errors = quaternion.as_float_array(errors)
+    errors_vec, errors_w = errors[:, 1:], errors[:, 0].reshape((-1, 1))
+    angles = 2 * np.arctan2(np.linalg.norm(errors_vec, axis=-1), np.abs(errors_w))    
+    return np.degrees(angles)
+
+  # @staticmethod
+  # def abs_errors_orienation(y_true, y_pred):
+  #   quat_true = quaternion.as_quat_array(y_true[..., [6,3,4,5]].copy())
+  #   quat_pred = quaternion.as_quat_array(y_pred[..., [6,3,4,5]].copy())
+  #   errors = (quat_true * quat_pred.conjugate())
+  #   angles = np.degrees([q.angle() for q in errors])
+  #   return np.abs(np.where(angles > 180.0, angles - 360.0, angles))

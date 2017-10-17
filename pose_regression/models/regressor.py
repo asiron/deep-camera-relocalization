@@ -1,4 +1,3 @@
-
 from keras.models import Model
 from keras.layers import Dropout, Dense, Input
 from keras.optimizers import Adam
@@ -15,7 +14,6 @@ class Regressor(object):
     #self.input = Input(shape=input_shape)
 
   def build(self, input_tensor):
-
 
     dense_1 = Dense(int(input_tensor.shape[1]),
       activation='relu', 

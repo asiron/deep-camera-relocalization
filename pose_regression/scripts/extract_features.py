@@ -1,15 +1,13 @@
-#!/usr/bin/env
-
-import argparse, os
 import numpy as np
+import argparse, os
+
 from tqdm import tqdm
-
-from cnn.googlenet import GoogleNet
-from cnn.inception_resnet_v2 import InceptionResNetV2
-
-from utils import make_dir, generate_images, IMAGE_PATTERN
-
 from itertools import izip, takewhile
+
+from ..cnn.googlenet import GoogleNet
+from ..cnn.inception_resnet_v2 import InceptionResNetV2
+
+from ..utils import make_dir, generate_images, IMAGE_PATTERN
 
 MODELS = {
   'googlenet' : GoogleNet,

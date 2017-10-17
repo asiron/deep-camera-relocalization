@@ -1,19 +1,22 @@
 #!/bin/bash
 
-export CUDA_PATH=/usr/local/cuda-8.0/bin
-export PATH=${CUDA_PATH}${PATH:+:${PATH}}
-export LOCAL_CUDNN_PATH=~/cudnn/
-export LD_LIBRARY_PATH=$LOCAL_CUDNN_PATH/cuda/lib64:$LD_LIBRARY_PATH
+# export CUDA_PATH=/usr/local/cuda-8.0/bin
+# export PATH=${CUDA_PATH}${PATH:+:${PATH}}
+# export LOCAL_CUDNN_PATH=~/cudnn/
+# export LD_LIBRARY_PATH=$LOCAL_CUDNN_PATH/cuda/lib64:$LD_LIBRARY_PATH
+
+MODULE="pose_regression.train"
 
 DATE=`date +"%m_%d_%Y--%H-%M-%S"`
 
 DATASET_DIR="${HOME}/datasets/wing"
+RESULT_DIR="/media/labuser/Flight_data/maciej-cnn-wing-results-finetune"
 
-#HYPERPARAM_CONFIG="configs.hyperparam_initial_config"
-HYPERPARAM_CONFIG="configs.hyperparam_finetune"
+MODE=finetune
 
 ITERS=20
-TOP_MODEL_TYPE=lstm
+TOP_MODEL_TYPE=regressor
+HYPERPARAM_CONFIG="pose_regression.configs.hyperparam_finetune"
 
 NETS=(
   #googlenet,imagenet
@@ -21,17 +24,15 @@ NETS=(
   #inception_resnet_v2,imagenet
 )
 
-MODE=finetune
-
 TOP_MODEL_WEIGHTS=something
 
 LOSSES=(
   # naive_weighted
   # quaternion_error_weighted
   # quaternion_angle_weighted
-  quaternion_error_homoscedastic
   quaternion_angle_homoscedastic
-  naive_homoscedastic
+  quaternion_error_homoscedastic
+  #naive_homoscedastic
 )
 
 for net in "${NETS[@]}"; do 
@@ -53,19 +54,19 @@ for net in "${NETS[@]}"; do
     valid_seq_feature_dirs+=("${seq}/extracted_features/${arch}/${dataset}/finetune_features.npy")
   done  
   
-  for loss in "${LOSSES[@]}"; do     
-    OUTPUT_DIR="/media/labuser/Flight_data/maciej-cnn-wing-results-finetune"
-    OUTPUT_DIR="${OUTPUT_DIR}/${DATE}/${MODE}-${TOP_MODEL_TYPE}-${loss}-${arch}-${dataset}/"
+  for i in `seq $ITERS`; do
+    for loss in "${LOSSES[@]}"; do     
 
-    mkdir -p "${OUTPUT_DIR}"
+      output_dir="${RESULT_DIR}/${DATE}/${MODE}-${TOP_MODEL_TYPE}-${loss}-${arch}-${dataset}/"
 
-    for i in `seq $ITERS`; do
-      python train.py \
+      mkdir -p "${output_dir}"
+
+      python -m "${MODULE}" \
         -tl "${train_seq_label_dirs[@]}" \
         -tf "${train_seq_feature_dirs[@]}" \
         -vl "${valid_seq_label_dirs[@]}" \
         -vf "${valid_seq_feature_dirs[@]}" \
-        -o "${OUTPUT_DIR}" \
+        -o "${output_dir}" \
         --mode "${MODE}" \
         --top-model-type "${TOP_MODEL_TYPE}" \
         --loss "${loss}" \
@@ -76,9 +77,8 @@ for net in "${NETS[@]}"; do
         -i 1 \
         --epochs 50 \
         --batch-size 64 \
-        --save-period 1 \
-        --seq-len 10
-      exit
-   done
+        --save-period 1
+        #--seq-len 72
+    done
   done
 done

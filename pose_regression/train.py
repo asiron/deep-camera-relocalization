@@ -2,21 +2,20 @@
 import numpy as np
 import argparse, os, importlib
 
+from sklearn.model_selection import train_test_split
+from keras.models import load_model
 from keras.callbacks import (
   LearningRateScheduler, 
   ModelCheckpoint,
   EarlyStopping
 )
 
-from keras.models import load_model
-
-from utils import make_dir, load_labels, ExtendedLogger, make_sequences
-from sklearn.model_selection import train_test_split
-
 from models import pose_model, losses, metrics
 
 from cnn.googlenet.googlenet import GoogleNet
 from cnn.inception_resnet_v2.inception_resnet_v2 import InceptionResNetV2
+
+from utils import make_dir, load_labels, ExtendedLogger, prepare_sequences
 
 FINETUNING_MODELS = {
   'googlenet' : GoogleNet,
@@ -150,50 +149,33 @@ def main():
     help='Number of epochs to save a checkpoint')
 
   #parser.add_argument('-c', '--checkpoint', type=str)
-  
   args = parser.parse_args()
 
   hyperparam_config = importlib.import_module(args.hyperparam_config)
   
 
 
-  train_features_arr = [np.squeeze(np.load(f)) for f in args.train_features]
-  train_labels_arr   = [load_labels(l) for l in args.train_labels]
-
-  val_features_arr = [np.squeeze(np.load(f)) for f in args.val_features]
-  val_labels_arr   = [load_labels(l) for l in args.val_labels]
-
   if args.top_model_type == 'lstm':
     '''Make sequences here'''
-    if not args.seq_len:
-      raise ValueError('Sequence length has to be defined in LSTM mode!')
+    ''' LOAD SEQUENCES HERE '''
 
+  elif args.top_model_type == 'regressor':
+    train_features_arr = [np.squeeze(np.load(f)) for f in args.train_features]
+    train_labels_arr   = [load_labels(l) for l in args.train_labels]
 
-    # train_features, train_labels = [], []
-    # val_features, val_labels = [], []
+    val_features_arr = [np.squeeze(np.load(f)) for f in args.val_features]
+    val_labels_arr   = [load_labels(l) for l in args.val_labels]
 
-    # for train_f, train_l in zip(train_features_arr, train_labels_arr):
-    #   tf_seq, tl_seq = make_sequences(train_f, train_l, args.seq_len)
-    #   train_features.append(tf_seq)
-    #   train_labels.append(tl_seq)
+    train_features = np.concatenate(train_features_arr)
+    train_labels = np.concatenate(train_labels_arr)
+    #train_labels = train_labels[..., [0,1,2,4,5,6,3]]
 
-    # for val_f, val_l in zip(val_features_arr, val_labels_arr):
-    #   vf_seq, vl_seq = make_sequences(val_f, val_l, args.seq_len)
-    #   val_features.append(vf_seq)
-    #   val_labels.append(vl_seq)
- 
-  train_features = np.concatenate(train_features)
-  train_labels = np.concatenate(train_labels)
-  #train_labels = train_labels[..., [0,1,2,4,5,6,3]]
-
-  val_features = np.concatenate(val_features)
-  val_labels   = np.concatenate(val_labels)
-  #val_labels = val_labels[..., [0,1,2,4,5,6,3]]
+    val_features = np.concatenate(val_features_arr)
+    val_labels   = np.concatenate(val_labels_arr)
+    #val_labels = val_labels[..., [0,1,2,4,5,6,3]]
 
   print train_features.shape, train_labels.shape
   print val_features.shape, val_labels.shape
-  return                                                                                                                                                                                                                                                                                                                                                                                  
-
 
   if args.mode == 'initial': 
     input_shape = train_features.shape[1]
@@ -247,6 +229,10 @@ def main():
     epochs=args.epochs,
     save_period=args.save_period,
     batch_size=args.batch_size)
+
+if __name__ == '__main__':
+  main()
+
 
   '''
   #labels = np.vstack([load_labels(l) for l in args.labels])
@@ -314,6 +300,3 @@ def main():
   # np.save('predicted.npy', predictions)
   # np.save('true.npy', y_valid)
   '''
-
-if __name__ == '__main__':
-  main()

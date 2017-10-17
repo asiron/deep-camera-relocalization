@@ -8,6 +8,8 @@ from keras.callbacks import Callback, CSVLogger, TensorBoard
 
 from cnn.image_utils import load_and_process
 
+from itertools import izip
+
 LABEL_PATTERN = 'pos_[0-9]*.txt'
 IMAGE_PATTERN = '^image_[0-9]{5}\.(png|jpg)$'
 
@@ -45,10 +47,14 @@ def load_labels(directory, pattern=LABEL_PATTERN):
 
 def generate_images_from_filenames(image_filenames, batch_size=10, 
   resize=(299,299), func=lambda x: x):
-
+  '''
+  Generator, which yields processed images in batches from a directory
+  Preprocessing does the following:
+    resizes image to a given dimensions with a center crop
+    applies a function at the end if any is given
+  '''
   def generator():
     process_file = lambda f: func(load_and_process(f, resize))
-
     for filenames_batch in grouper(image_filenames, batch_size):
       batch = [process_file(f) for f in filenames_batch if f != None]
       yield np.array(batch)
@@ -62,23 +68,45 @@ def generate_images_from_filenames(image_filenames, batch_size=10,
 
 def generate_images(directory, batch_size=10, 
   resize=(299, 299), func=lambda x: x, pattern=IMAGE_PATTERN):
-  '''
-  Generator, which yields processed images in batches from a directory
-  Preprocesing does the following:
-    resizes image to a given dimensions with a center crop
-    scales image s.t each pixel is in [-1, 1] range
-    applies a function at the end if any is given
-  '''
   image_filenames = find_files(directory, pattern)
   return generate_images_from_filenames(image_filenames, batch_size=batch_size,
     resize=resize, func=func)
 
-def make_sequences(Xs, Ys, seqlen, step = 1):
-  Xseq, Yseq = [], []
-  for i in xrange(0, Xs.shape[0]-seqlen+1, step):
-    Xseq.append(Xs[i: i+seqlen])
-    Yseq.append(Ys[i: i+seqlen])
-  return np.array(Xseq), np.array(Yseq)
+def split_and_pad(sequence, seq_len):
+  full_subseq_count = len(sequence) // seq_len
+  last_full_subseq_ind = int(full_subseq_count * seq_len)
+
+  full_subseqs = []
+  if full_subseq_count != 0:
+    full_subseqs = np.split(sequence[:last_full_subseq_ind], full_subseq_count)
+  
+  last_subseq = sequence[last_full_subseq_ind:]
+  padding_len = seq_len - (len(sequence) % seq_len)
+
+  padding = sequence[-padding_len-1:-1][::-1]
+  last_subseq_padded = np.concatenate([last_subseq, padding], axis=0)
+  full_subseqs.append(last_subseq_padded)
+  
+  full_subseqs = np.stack(full_subseqs, axis=0)
+  assert len(full_subseqs) is int(np.ceil(len(sequence) / float(seq_len)))
+
+  return full_subseqs
+
+def prepare_sequences(features_arr, labels_arr, seq_len):
+  total = len(features_arr)
+  padded_feature_arr, padded_label_arr = [], []
+  gen = itertools.izip(features_arr, labels_arr)
+  for f_seq, l_seq in tqdm(gen, total=total):
+    padded_feature_seqs = split_and_pad(f_seq, seq_len)
+    padded_label_seqs = split_and_pad(l_seq, seq_len)
+
+    padded_feature_arr.append(padded_feature_seqs)
+    padded_label_arr.append(padded_label_seqs)
+
+  padded_feature_arr = np.concatenate(padded_feature_arr, axis=0)
+  padded_label_arr = np.concatenate(padded_label_arr, axis=0)
+
+  return padded_feature_arr, padded_label_arr
 
 def search_layer(model, layer_name):
   found_layer = None

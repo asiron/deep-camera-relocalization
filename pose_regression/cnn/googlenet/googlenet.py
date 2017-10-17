@@ -1,10 +1,10 @@
 import os
 import numpy as np
 
-from .googlenet_layers import LRN
-
 from keras.layers import Input
 from keras.models import Model, load_model, Model
+
+from .googlenet_layers import LRN
 
 class GoogleNet(object):
 
