@@ -34,10 +34,9 @@ class HomoscedasticLoss(Layer):
     return x * K.exp(-self.log_variance) + self.log_variance
 
   def compute_output_shape(self, input_shape):
-    return (input_shape[0], 1)
+    return input_shape
 
   def get_config(self):
     config = {'log_variance_init': self.log_variance_init}
     base_config = super(HomoscedasticLoss, self).get_config()
-    print base_config
     return dict(list(base_config.items()) + list(config.items()))

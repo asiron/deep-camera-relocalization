@@ -2,11 +2,13 @@
 
 MODULE="pose_regression.scripts.compute_mean"
 
-DATASET_DIR="${HOME}/datasets/7scenes"
+
+DATASETS="/media/labuser/Storage/arg-00/datasets"
+DATASET_DIR="${DATASETS}/7scenes"
 
 TFFILE=$(mktemp /tmp/foo.XXXXXXXXX)
 
-for dataset in $DATASET_DIR/*/; do
+for dataset in $DATASET_DIR/office/train; do
 
     echo "Processing dataset: " $dataset
   
@@ -19,16 +21,10 @@ for dataset in $DATASET_DIR/*/; do
     echo "Computing mean with size 224x224"
     python -m "${MODULE}" \
       --resize 224x224 \
-      --batch-size 100 \
+      --batch-size 128 \
       -i "${TFFILE}" \
       -o "${output_dir}/224"
-
-    echo "Computing mean with size 299x299"
-    python -m "${MODULE}" \
-      --resize 299x299 \
-      --batch-size 100 \
-      -i "${TFFILE}" \
-      -o "${output_dir}/299"
+      #-r 32
 
     rm "${TFFILE}"
 

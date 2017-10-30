@@ -1,43 +1,48 @@
-from keras.layers import Input, GlobalAveragePooling2D
+from keras.layers import Input, GlobalAveragePooling2D, AveragePooling2D
 from keras.models import Model, Sequential
 
 from .inception_resnet_v2_base import preprocess_input, inception_resnet_block, conv2d_bn
 from .inception_resnet_v2_base import InceptionResNetV2 as BaseModel
 
 from ..image_utils.image_utils import scale_image
+
 class InceptionResNetV2(object):
 
   MODES = ['extract', 'finetune']
   DATASETS = ['imagenet']
 
-  def __init__(self, dataset='imagenet', mode=None):
+  def __init__(self, mode=None, **kwargs):
 
     if mode not in InceptionResNetV2.MODES:
       raise ValueError('Must specify a valid mode!')
 
-    if dataset not in InceptionResNetV2.DATASETS:
+    if kwargs.get('dataset', None) not in InceptionResNetV2.DATASETS:
       raise ValueError('Must specify a valid dataset!')
 
     self.input_shape = (299, 299, 3)
+    self.dataset = kwargs['dataset']
+    self.mode = mode
 
-    base_model = BaseModel(weights=dataset, 
+  def build(self):
+
+    base_model = BaseModel(
+      weights=self.dataset, 
       include_top=False, 
       input_shape=self.input_shape,
       pooling='avg')
 
     injection_layer_name = 'before_last_conv_passthrough'
-    idx = [i for i,x in enumerate(base_model.layers) if x.name == injection_layer_name][0]
-    injection_layer = base_model.layers[idx]
+    injection_layer = base_model.get_layer(injection_layer_name)
+    '''idx = [i for i,x in enumerate(base_model.layers) if x.name == injection_layer_name][0]'''
 
-    if mode == 'extract':
-
-      self.model = Model(
-        inputs=base_model.input,
+    if self.mode == 'extract':
+      self.model = Model(inputs=base_model.input,
         outputs=[base_model.output, injection_layer.output])
-    
-    elif mode == 'finetune':
 
-      top_model_input = Input(shape=injection_layer.input_shape[1:], name='last_conv_input')
+    elif self.mode == 'finetune':
+      top_model_input = Input(
+        shape=injection_layer.input_shape[1:], 
+        name='last_conv_input')
       x = top_model_input
 
       # 10x block8 (Inception-ResNet-C block): 8 x 8 x 2080
@@ -55,13 +60,11 @@ class InceptionResNetV2(object):
       # Final convolution block: 8 x 8 x 1536
       x = conv2d_bn(x, 1536, 1, name='conv_7b')
       top_model_output = GlobalAveragePooling2D()(x)
-      #top_model_output = reduce(lambda x,l: l(x), base_model.layers[idx:], top_model_input)
 
-
-
-      top_model = Model(inputs=top_model_input, outputs=top_model_output)
-      self.model = top_model
+      self.model = Model(inputs=top_model_input, outputs=top_model_output)
+    
+    return self.model
 
   def preprocess_image(self, images):
-    '''Inception ResNet v2 was traing on RGB images so no need to convert'''
+    '''Inception ResNet v2 was traing on RGB images only scaling to [-1, 1] is required'''
     return scale_image(images)

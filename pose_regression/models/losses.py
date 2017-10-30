@@ -21,30 +21,57 @@ def quaternion_mul(q1, q2):
 
 @scope_wrapper
 def quaternion_conj(q):
-  q_vector, q_w = q[..., :-1], tf.reshape(q[..., -1], [-1, 1])
-  return tf.concat([q_vector, -q_w], axis=-1)
+  xyz, w = q[..., :-1], tf.expand_dims(q[..., -1], axis=-1)
+  return tf.concat([xyz, -w], axis=-1)
+
+@scope_wrapper
+def quaternion_angle_loss(q1, q2, gamma):
+  diff = quaternion_mul(q1, quaternion_conj(q2))
+  diff = K.clip(diff, -1.0, 1.0)
+  xyz, w = diff[..., :-1], tf.expand_dims(diff[..., -1], axis=-1)
+  norms = tf.expand_dims(tf.norm(xyz, axis=-1), axis=-1)
+  angle = 2 * tf.atan2(norms, K.abs(w))
+  print(norms.shape, w.shape, angle.shape)
+  return angle ** 2 if gamma == 2 else K.abs(angle)
+
+@scope_wrapper
+def quaternion_error_loss(q1, q2, L_gamma):
+  diff = quaternion_mul(q1, quaternion_conj(q2))
+  return 0.5 * L_gamma(diff[..., :3])
 
 class PoseLoss(Lambda):
 
   def __init__(self, name=None, **hyperparams):
 
+    self.stateless = hyperparams.get('stateless', False)
     self.gamma = hyperparams.get('gamma', -1)
     if self.gamma == 1:
-      self.L_gamma = lambda x: K.sum(K.abs(x), axis=-1)
+      self.L_gamma = lambda x: K.mean(K.abs(x), axis=-1)
     elif self.gamma == 2:
-      self.L_gamma = lambda x: K.sqrt(K.sum(K.square(x), axis=-1))
+      self.L_gamma = lambda x: K.mean(K.square(x), axis=-1)
     else:
       raise ValueError('gamma has to be either 1 or 2 (L1 or L2 loss)')
 
-    def loss(args):
-      y_pred, y_true = args
-      pos_true,  pos_pred  = y_true[..., :3], y_pred[..., :3]
-      quat_true, quat_pred = y_true[..., 3:], y_pred[..., 3:]
-      p_loss = self.position_loss(pos_true, pos_pred)
-      q_loss = self.quaternion_loss(quat_true, quat_pred)
-      p_loss = K.reshape(p_loss, [-1, 1])
-      q_loss = K.reshape(q_loss, [-1, 1])
-      return K.concatenate([p_loss, q_loss], axis=-1)
+    if self.stateless:
+      def loss(merged):
+          y_pred, y_true = merged[..., :7], merged[..., 7:]
+          pos_true,  pos_pred  = y_true[..., :3], y_pred[..., :3]
+          quat_true, quat_pred = y_true[..., 3:], y_pred[..., 3:]
+          p_loss = self.position_loss(pos_true, pos_pred)
+          q_loss = self.quaternion_loss(quat_true, quat_pred)
+          p_loss = K.reshape(p_loss, [-1, 1])
+          q_loss = K.reshape(q_loss, [-1, 1])
+          return K.concatenate([p_loss, q_loss], axis=-1)
+    else:
+      def loss(args):
+        y_pred, y_true = args
+        pos_true,  pos_pred  = y_true[..., :3], y_pred[..., :3]
+        quat_true, quat_pred = y_true[..., 3:], y_pred[..., 3:]
+        p_loss = self.position_loss(pos_true, pos_pred)
+        q_loss = self.quaternion_loss(quat_true, quat_pred)
+        p_loss = K.reshape(p_loss, [-1, 1])
+        q_loss = K.reshape(q_loss, [-1, 1])
+        return K.concatenate([p_loss, q_loss], axis=-1)
 
     super(PoseLoss, self).__init__(loss, output_shape=(2,), name=name)
 
@@ -71,23 +98,15 @@ class QuaternionErrorPoseLoss(PoseLoss):
     return self.L_gamma_loss(pos_true - pos_pred)
 
   def quaternion_loss(self, quat_true, quat_pred):
-    quat_diff = quaternion_mul(quat_true, quaternion_conj(quat_pred))
-    quat_error = quat_diff[..., :3]
-    return 0.5 * self.L_gamma(quat_error)
-
+    return quaternion_error_loss(quat_true, quat_pred, self.L_gamma)
+    
 class QuaternionAnglePoseLoss(PoseLoss):
 
   def position_loss(self, pos_true, pos_pred):
     return self.L_gamma_loss(pos_true - pos_pred)
 
   def quaternion_loss(self, quat_true, quat_pred):
-    quat_diff = quaternion_mul(quat_true, quaternion_conj(quat_pred))
-    quat_diff = K.clip(quat_diff, -1.0, 1.0)
-    xyz, w = quat_diff[..., :3], quat_diff[..., 3]
-    #w = quat_diff[..., 3]
-    #angle = 2 * tf.acos(K.abs(w))
-    angle = 2 * tf.atan2(tf.norm(xyz, axis=-1), K.abs(w))
-    return angle ** 2 if self.gamma == 2 else K.abs(angle)
+    return quaternion_angle_loss(quat_true, quat_pred, self.gamma)
 
 class WeightedPoseLoss(object): 
 
@@ -143,9 +162,7 @@ class QuaternionErrorWeightedPoseLoss(WeightedPoseLoss):
     return self.L_gamma_loss(pos_true - pos_pred)
 
   def quaternion_loss(self, quat_true, quat_pred):
-    quat_diff = quaternion_mul(quat_true, quaternion_conj(quat_pred))
-    quat_error = quat_diff[..., :3]
-    return 0.5 * self.L_gamma(quat_error)
+    return quaternion_error_loss(quat_true, quat_pred, self.L_gamma)
 
 class QuaternionAngleWeightedPoseLoss(WeightedPoseLoss):
 
@@ -155,9 +172,65 @@ class QuaternionAngleWeightedPoseLoss(WeightedPoseLoss):
     return self.L_gamma_loss(pos_true - pos_pred)
 
   def quaternion_loss(self, quat_true, quat_pred):
-    quat_diff = quaternion_mul(quat_true, quaternion_conj(quat_pred))
-    xyz, w = quat_diff[..., :3], quat_diff[..., 3]
-    return K.abs(2 * tf.atan2(tf.norm(xyz, axis=-1), w))
+    return quaternion_angle_loss(quat_true, quat_pred, self.gamma)
+
+
+class PositionOnlyLoss(object): 
+
+  __name__ = '_position_only_loss'
+
+  def __init__(self, **hyperparams):
+
+    self.gamma = hyperparams.get('gamma', -1)
+    if self.gamma == 1:
+      self.L_gamma = lambda x: K.mean(K.abs(x), axis=-1)
+    elif self.gamma == 2:
+      self.L_gamma = lambda x: K.mean(K.square(x), axis=-1)
+    else:
+      raise ValueError('gamma has to be either 1 or 2 (L1 or L2 loss)')
+
+  def __call__(self, y_true, y_pred):
+    return self.loss(y_true, y_pred)
+
+  def loss(self, y_true, y_pred):
+    pos_true, pos_pred  = y_true[..., :3], y_pred[..., :3]
+    p_loss = self.position_loss(pos_true, pos_pred)
+    return p_loss
+
+  def position_loss(self, pos_true, pos_pred):
+    return self.L_gamma(pos_true - pos_pred)
+
+  def L_gamma_loss(self, err):
+    return self.L_gamma(err)
+
+class QuaternionOnlyLoss(object): 
+
+  __name__ = '_quaternion_only_loss'
+
+  def __init__(self, **hyperparams):
+
+    self.gamma = hyperparams.get('gamma', -1)
+    if self.gamma == 1:
+      self.L_gamma = lambda x: K.mean(K.abs(x), axis=-1)
+    elif self.gamma == 2:
+      self.L_gamma = lambda x: K.mean(K.square(x), axis=-1)
+    else:
+      raise ValueError('gamma has to be either 1 or 2 (L1 or L2 loss)')
+
+  def __call__(self, y_true, y_pred):
+    return self.loss(y_true, y_pred)
+
+  def loss(self, y_true, y_pred):
+    quat_true, quat_pred = y_true[..., 3:], y_pred[..., 3:]
+    q_loss = self.quaternion_loss(quat_true, quat_pred)
+    return q_loss
+
+  def quaternion_loss(self, quat_true, quat_pred):
+    return quaternion_angle_loss(quat_true, quat_pred, self.gamma)
+
+  def L_gamma_loss(self, err):
+    return self.L_gamma(err)
+
 
 LOSSES = {
   'naive_weighted' : NaiveWeightedPoseLoss,
@@ -166,5 +239,8 @@ LOSSES = {
 
   'naive_homoscedastic': NaivePoseLoss,
   'quaternion_error_homoscedastic' : QuaternionErrorPoseLoss,
-  'quaternion_angle_homoscedastic' : QuaternionAnglePoseLoss
+  'quaternion_angle_homoscedastic' : QuaternionAnglePoseLoss,
+
+  'only_position' : PositionOnlyLoss,
+  'only_quaternion' : QuaternionOnlyLoss
 }

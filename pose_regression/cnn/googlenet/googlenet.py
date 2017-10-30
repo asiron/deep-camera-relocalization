@@ -1,3 +1,5 @@
+from __future__ import print_function
+
 import os
 import numpy as np
 
@@ -11,55 +13,63 @@ class GoogleNet(object):
   MODES = ['extract', 'finetune']
   DATASETS = ['imagenet', 'places365', 'places205']
 
-  def __init__(self, dataset=None, mode=None, meanfile=None):
+  def __init__(self, mode=None, **kwargs):
 
     if mode not in GoogleNet.MODES:
       raise ValueError('Must specify a valid mode!')
 
-    if dataset not in GoogleNet.DATASETS:
+    if kwargs.get('dataset', None) not in GoogleNet.DATASETS:
       raise ValueError('Must specify a valid dataset!')
 
-    if mode == 'extract' and not meanfile:
+    if mode == 'extract' and kwargs.get('meanfile', None) is None:
       raise ValueError('Must specify a valid meanfile!')
 
-    if meanfile:
-      self.rgb_mean_file = np.load(meanfile)
+    meanfile = kwargs.get('meanfile', None)
+    if meanfile is not None:
+      print('Meanfile loaded from {}'.format(meanfile))
+      self.rgb_channelwise_mean = np.load(meanfile).mean(axis=(0,1))
 
-    weights_dir = os.path.join(os.path.dirname(__file__), dataset)
-
+    self.mode = mode
+    self.dataset = kwargs['dataset']
     self.input_shape = (224, 224, 3)
-    
-    last_inception_block_file = os.path.join(
-      weights_dir, '{}_last_inception.h5'.format(dataset))
-    last_inception_block = load_model(last_inception_block_file)
 
-    if mode == 'extract':
+  def build(self):
+
+    weights_dir = os.path.join(os.path.dirname(__file__), self.dataset)
+
+    finetuning_model_file = os.path.join(
+      weights_dir, '{}_finetuning.h5'.format(self.dataset))
+    finetuning_model = load_model(finetuning_model_file)
+
+    if self.mode == 'extract':
 
       googlenet_base_file = os.path.join(
-        weights_dir, '{}_base.h5'.format(dataset))
+        weights_dir, '{}_base.h5'.format(self.dataset))
       googlenet_base = load_model(googlenet_base_file, custom_objects={'LRN': LRN})
 
       input_layer = Input(shape=self.input_shape, name='extract_input')
 
       base = googlenet_base(input_layer)
-      heads = last_inception_block(base)
+      heads = finetuning_model(base)
 
       if isinstance(heads, list):
         outputs = [heads[0], heads[1], heads[2], base]
       else:
         outputs = [heads, base]
         
-      self.model = Model(inputs=input_layer, outputs=outputs)
+      return Model(inputs=input_layer, outputs=outputs)
 
-    elif mode == 'finetune':
-      self.model = last_inception_block
+    elif self.mode == 'finetune':
+      return finetuning_model
 
   def preprocess_image(self, image):
     '''
-    Subtracts the mean and converts from RGB to BGR
+    Subtracts the channel-wise mean and converts from RGB to BGR
     No scaling to [0,1] range is required as the models were trained using Caffe
     '''    
-    image -= self.rgb_mean_file
+    image[..., 0] -= self.rgb_channelwise_mean[0]
+    image[..., 1] -= self.rgb_channelwise_mean[1]
+    image[..., 2] -= self.rgb_channelwise_mean[2]
     image = image[..., ::-1]
     return image
 

@@ -1,4 +1,5 @@
-#!/usr/bin/env
+from __future__ import print_function
+
 import numpy as np
 import argparse, os, importlib
 
@@ -7,34 +8,31 @@ from keras.models import load_model
 from keras.callbacks import (
   LearningRateScheduler, 
   ModelCheckpoint,
-  EarlyStopping
+  EarlyStopping,
+  ReduceLROnPlateau
 )
 
 from models import pose_model, losses, metrics
-
-from cnn.googlenet.googlenet import GoogleNet
-from cnn.inception_resnet_v2.inception_resnet_v2 import InceptionResNetV2
-
-from utils import make_dir, load_labels, ExtendedLogger, prepare_sequences
-
-FINETUNING_MODELS = {
-  'googlenet' : GoogleNet,
-  'inception_resnet_v2' : InceptionResNetV2
-}
+from utils import (
+  make_dir, 
+  load_labels, 
+  ExtendedLogger,
+  ResetStatesCallback,
+  reshape_to_stateful_input)
 
 def create_callbacks(output='/tmp', prediction_layer=None, 
   run_identifier=None, l_rate_scheduler=None, save_period=1):
   '''
   Custom logger runs prediction at the end of a training epoch 
-  for the validationdataset. In order to retrieve the prediction 
+  for the validation dataset. In order to retrieve the prediction 
   on a specific layer, we have to pass the names of these layers. 
   This allows for custom loss functions with trainable parameters.
-  @see losses
+  @see .losses
   '''
-  early_stopper = EarlyStopping(monitor='val_loss', 
-    min_delta=0.0, patience=10, verbose=1)
+  early_stopper = EarlyStopping(monitor='val_loss', min_delta=0.0, 
+    patience=100, verbose=1)
 
-  lrscheduler = LearningRateScheduler(l_rate_scheduler)
+  #lrscheduler = LearningRateScheduler(l_rate_scheduler)
 
   tb_directory  = os.path.join(output, 'tensorboard', run_identifier)
   csv_directory = os.path.join(output, 'csv', run_identifier)
@@ -54,16 +52,25 @@ def create_callbacks(output='/tmp', prediction_layer=None,
   model_checkpoint = ModelCheckpoint(
     checkpoint_path,
     save_weights_only=True,
-    save_best_only=True,
+    save_best_only=False,
     period=save_period
   )
 
-  return [logger, model_checkpoint, lrscheduler, early_stopper]
+  reduce_lr = ReduceLROnPlateau(
+    monitor='val_loss',
+    factor=0.7,
+    patience=0,
+    min_lr=1e-6,
+    verbose=True,
+    epsilon=1e-4)
+
+  return [logger, model_checkpoint, early_stopper, reduce_lr]
+  #return [logger, model_checkpoint, lrscheduler, early_stopper]
   #return [logger, model_checkpoint, lrscheduler]
 
 def hyperparam_search(model_class, X_train, y_train, X_val, y_val,
   config=None, output=None, iters=50, save_period=1, epochs=1000,
-  batch_size=128):
+  batch_size=128, stateful=False, seq_len=None):
 
   if not config:
     raise ValueError('Hyperparam config has to be specified!')
@@ -82,13 +89,16 @@ def hyperparam_search(model_class, X_train, y_train, X_val, y_val,
       hyperparams['decay'])
 
     callbacks = create_callbacks(output=output, 
-      prediction_layer='quat_norm', 
+      prediction_layer='prediction', 
       run_identifier=hyperparam_desc,
       l_rate_scheduler=l_rate_scheduler,
       save_period=save_period
     )
 
-    model = model_class(**hyperparams).model
+    if stateful:
+      callbacks.append(ResetStatesCallback(seq_len=seq_len))
+
+    model = model_class(**hyperparams).build()
     model.summary()
 
     model.fit(X_train, y_train, 
@@ -96,7 +106,8 @@ def hyperparam_search(model_class, X_train, y_train, X_val, y_val,
       validation_data=(X_val, y_val),
       epochs=epochs,
       callbacks=callbacks,
-      verbose=True
+      verbose=True,
+      shuffle=(not stateful)
     )
 
 def main():
@@ -120,6 +131,9 @@ def main():
     choices=pose_model.PoseModel.MODES,
     help='Training mode, initial or finetuning')
   
+  parser.add_argument('--random-crops', type=bool, default=False,
+    help='Whether the input features contain random crops')
+
   parser.add_argument('--top-model-weights',
     help='Top-model\'s weights for finetuning')
   parser.add_argument('--finetuning-model-arch', choices=['googlenet', 'inception_resnet_v2'],
@@ -128,10 +142,10 @@ def main():
     help='Dataset on which finetuning model was pretrained ')
 
   parser.add_argument('-tm', '--top-model-type', default='regressor',
-    choices=pose_model.TOPMODELS.keys(),
+    choices=pose_model.PoseModel.TOPMODELS.keys(),
     help='Top model to use for regression')
   parser.add_argument('--seq-len', type=int,
-    help='If top-model-type is set to \'lstm\', then seq-len has to be specified!')
+    help='If top-model-type is an LSTM, then seq-len has to be specified!')
 
   parser.add_argument('--loss', default='naive_weighted',
     choices=losses.LOSSES.keys(),
@@ -153,57 +167,62 @@ def main():
 
   hyperparam_config = importlib.import_module(args.hyperparam_config)
   
+  if ('stateful' in args.top_model_type) or ('standard' in args.top_model_type):
+    
+    train_features = np.load(args.train_features[0], mmap_mode='r')
+    train_labels = np.load(args.train_labels[0], mmap_mode='r')
 
+    val_features = np.load(args.val_features[0], mmap_mode='r')
+    val_labels = np.load(args.val_labels[0], mmap_mode='r')
 
-  if args.top_model_type == 'lstm':
-    '''Make sequences here'''
-    ''' LOAD SEQUENCES HERE '''
-
-  elif args.top_model_type == 'regressor':
-    train_features_arr = [np.squeeze(np.load(f)) for f in args.train_features]
+  elif args.top_model_type in ['regressor', 'spatial-lstm']:
+    train_features_arr = [np.squeeze(np.load(f, mmap_mode='r')) for f in args.train_features]
     train_labels_arr   = [load_labels(l) for l in args.train_labels]
 
-    val_features_arr = [np.squeeze(np.load(f)) for f in args.val_features]
+    val_features_arr = [np.squeeze(np.load(f, mmap_mode='r')) for f in args.val_features]
     val_labels_arr   = [load_labels(l) for l in args.val_labels]
 
-    train_features = np.concatenate(train_features_arr)
     train_labels = np.concatenate(train_labels_arr)
-    #train_labels = train_labels[..., [0,1,2,4,5,6,3]]
-
     val_features = np.concatenate(val_features_arr)
     val_labels   = np.concatenate(val_labels_arr)
-    #val_labels = val_labels[..., [0,1,2,4,5,6,3]]
 
-  print train_features.shape, train_labels.shape
-  print val_features.shape, val_labels.shape
+    if args.random_crops:
+      print('Random crops enabled!')
+      crops = train_features_arr[0].shape[1]
+      feature_shape = train_features_arr[0].shape[2:]
+      train_features = train_features_arr[0].reshape((-1,) + feature_shape)
+      train_labels = np.repeat(train_labels, crops, axis=0)
+    else:
+      print('Random crops disabled!')
+      train_features = np.concatenate(train_features_arr)
 
-  if args.mode == 'initial': 
-    input_shape = train_features.shape[1]
+  print(train_features.shape, train_labels.shape)
+  print(val_features.shape, val_labels.shape)
+
+  if args.mode == 'initial':
+    input_shape = (train_features.shape[-1],)
     def model_class(**hyperparams):
       return pose_model.PoseModel(
-        input_shape=(input_shape,),
+        input_shape=input_shape,
         top_model_type=args.top_model_type,
         model_loss=args.loss,
         mode=args.mode,
+        batch_size=args.batch_size,
+        seq_len=args.seq_len,
         **hyperparams)
 
   elif args.mode == 'finetune':
-
-    finetuning_model_arch = args.finetuning_model_arch
-    finetuning_model_dataset = args.finetuning_model_dataset
-
-    finetuning_model_class = FINETUNING_MODELS[finetuning_model_arch]
-    finetuning_model = finetuning_model_class(
-      dataset=finetuning_model_dataset, mode='finetune').model
-
     def model_class(**hyperparams):
       return pose_model.PoseModel(
         input_shape=None,
         top_model_type=args.top_model_type,
         model_loss=args.loss,
         mode=args.mode,
-        finetune_model=finetuning_model,
+        finetuning_model_arch=args.finetuning_model_arch,
+        finetuning_model_dataset=args.finetuning_model_dataset,
         topmodel_weights=args.top_model_weights,
+        batch_size=args.batch_size,
+        seq_len=args.seq_len,
         **hyperparams)
 
   if 'homoscedastic' in args.loss:
@@ -213,13 +232,13 @@ def main():
     dummy data and secondary input is designated for the actual labels.
     Rerouting of the data happens here.
     '''
-    #train_features = [train_labels, train_features]
-    train_features = [train_features, train_labels]
-    train_labels = np.zeros(train_labels.shape)
+    train_features = {'main_input' : train_features, 'labels_input' : train_labels}
+    train_labels = np.zeros((train_labels.shape[0],))
 
-    #val_features = [val_labels, val_features]
-    val_features = [val_features, val_labels]
-    val_labels = np.zeros(val_labels.shape)
+    val_features = {'main_input' : val_features, 'labels_input' : val_labels}
+    val_labels = np.zeros((val_labels.shape[0],))
+
+  stateful = 'stateful' in args.top_model_type
 
   hyperparam_search(model_class, train_features, train_labels,
     val_features, val_labels,
@@ -228,75 +247,9 @@ def main():
     iters=args.iters,
     epochs=args.epochs,
     save_period=args.save_period,
-    batch_size=args.batch_size)
+    batch_size=args.batch_size,
+    stateful=stateful,
+    seq_len=args.seq_len)
 
 if __name__ == '__main__':
   main()
-
-
-  '''
-  #labels = np.vstack([load_labels(l) for l in args.labels])
-  labels = [load_labels(l)[33:] for l in args.labels][0]
-
-  chunk_size = 59
-  chunks = [labels[x:x+chunk_size] for x in xrange(0, len(labels), chunk_size)][:10]
-
-  val_chunks = [c[:12] for c in chunks]
-  train_chunks = [c[12:47] for c in chunks]
-  test_chunks = [c[47:] for c in chunks]
-
-  # X_train, X_test, y_train, y_test = train_test_split(
-  #   features, labels, train_size=0.8
-  # )
-  
-
-  import matplotlib as mpl
-  from mpl_toolkits.mplot3d import Axes3D
-  import matplotlib.pyplot as plt
-
-  fig = plt.figure()
-  ax = fig.gca(projection='3d')
-
-
-  for vc in val_chunks:
-    ax.plot(vc[:, 0], vc[:, 1], vc[:, 2], color='red')
-
-  for trc in train_chunks:
-    ax.plot(trc[:, 0], trc[:, 1], trc[:, 2], color='blue')
-
-  for tec in test_chunks:
-    ax.plot(tec[:, 0], tec[:, 1], tec[:, 2], color='green')
-
-  ax.legend()
-
-  plt.show()
-
-  return
-
-  if args.checkpoint:
-    from keras.models import load_model
-    from models import QuaternionNormalization, ProperWeightedPoseLoss
-
-    model = load_model(args.checkpoint, custom_objects={
-      'QuaternionNormalization' : lambda *args, **kwargs: QuaternionNormalization('quat_norm'),
-      'proper_w_pose_loss' : ProperWeightedPoseLoss(beta=11, gamma=1)
-    })
-
-    model.predict(features, batch_size=128, verbose=1)
-    print 'OK!'
-    return
-  
-  if args.model in ['homo-w', 'homo-p']:
-    raise NotImplementedError('Homoescedastic uncertaintity is not yet implemented')
-
-  if args.model == 'naive-w':
-    model_class = NaiveWeightedLinearRegression
-  elif args.model == 'naive-p':
-    model_class = ProperWeightedLinearRegression
-
-  hyperparam_search(model_class, X_train, y_train, output=args.output, iters=args.iters)
-
-  # predictions = model.predict(X_valid, verbose=True)
-  # np.save('predicted.npy', predictions)
-  # np.save('true.npy', y_valid)
-  '''

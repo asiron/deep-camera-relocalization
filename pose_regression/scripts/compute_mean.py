@@ -1,3 +1,5 @@
+from __future__ import print_function
+
 import argparse, os
 import numpy as np
 
@@ -16,32 +18,43 @@ def main():
     help='Batch size for image feature extraction')
   parser.add_argument('--resize', type=str, required=True,
     help='Size to resize the image')
+  parser.add_argument('-r', '--random-crops', type=int, default=0,
+    help='Random crops per image')
+  parser.add_argument('-s', '--seed', type=int, default=42,
+    help='PRNG seed')
 
   args = parser.parse_args()
+
+  np.random.seed(args.seed)
+
   output_dir = args.output
   make_dir(output_dir)
 
   new_height, new_width = map(int, args.resize.split('x'))
-  print 'Resizing the images to: {}x{}'.format(new_height, new_width)
+  print('Resizing the images to: {}x{}'.format(new_height, new_width))
 
   with open(args.images, 'rt') as f:
 
     image_filenames = f.read().splitlines()[0].split(' ')[:-1]
+    image_count = len(image_filenames)
+    if args.random_crops:
+      total = (image_count / args.batch_size) * args.random_crops
+    else:
+      total = (image_count / args.batch_size)
 
     image_generator, _ = generate_images_from_filenames(
       image_filenames, 
       batch_size=args.batch_size, 
-      resize=(new_height, new_width)
+      resize=new_height,
+      random_crops=args.random_crops
     )
 
-    sums = ((b.sum(axis=0), b.shape[0]) 
-      for b in tqdm(takewhile(lambda b: b is not None, image_generator)))
-    sums = reduce(lambda x,y: (x[0]+y[0], x[1]+y[1]), sums)
-    mean = sums[0] / sums[1]
+    sums = sum(b.sum(axis=0)
+     for b in tqdm(takewhile(lambda b: b is not None, image_generator), total=total))
+    mean = sums / image_count
 
     meanfile = os.path.join(args.output, 'meanfile.npy')
     np.save(meanfile, mean)
-
     
 if __name__ == '__main__':
   main()
