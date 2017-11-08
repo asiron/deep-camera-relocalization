@@ -7,17 +7,17 @@ DATE=`date +"%m_%d_%Y--%H-%M-%S"`
 MODE=finetune
 #MODE=initial
 
-RANDOM_CROP=true
+RANDOM_CROP=false
 
 DATASETS="/media/labuser/Storage/arg-00/datasets"
 
 DATASET_DIR="${DATASETS}/7scenes"
 OUTPUT_DIR="/media/labuser/Flight_data1/maciej-cnn-7scenes-results-${MODE}"
 
-BATCH_SIZE=18
-SEQ_LEN=-1
+BATCH_SIZE=32
+SEQ_LEN=4
 
-ITERS=400
+ITERS=1000
 EPOCHS=200
 
 SCENES=(
@@ -31,31 +31,32 @@ HYPERPARAM_CONFIG="pose_regression.configs.hyperparam_finetune"
 TOP_MODEL_TYPES=(
   #stateful-regressor-lstm
   #stateful-lstm
-  #stateless-lstm
+  #standard-lstm
   #regressor
   spatial-lstm
 )
 
 NETS=(
   #googlenet,imagenet
-  googlenet,places365
+  #googlenet,places365
   #inception_resnet_v2,imagenet
+  vgg16,hybrid1365
 )
 
-#TOP_MODEL_WEIGHTS=/media/labuser/Flight_data1/maciej-cnn-7scenes-results-initial/10_21_2017--02-37-36/office/stateful-lstm-naive_homoscedastic-googlenet-places365/checkpoints/L1,decay=10,beta=132.7,lr=1.34e-04,dropout=0.128,l2_regu=0.056,lstm=1253/weights.0024-1.4515.hdf5
-#TOP_MODEL_WEIGHTS=/media/labuser/Flight_data1/maciej-cnn-7scenes-results-initial/10_21_2017--02-37-36/office/stateful-lstm-naive_homoscedastic-googlenet-places365/checkpoints/L2,decay=10,beta=227.7,lr=1.38e-04,dropout=0.432,l2_regu=0.034,lstm=843/weights.0038--1.0286.hdf5
+#MODEL_WEIGHTS=/media/labuser/Flight_data1/maciej-cnn-7scenes-results-initial/10_21_2017--02-37-36/office/stateful-lstm-naive_homoscedastic-googlenet-places365/checkpoints/L1,decay=10,beta=132.7,lr=1.34e-04,dropout=0.128,l2_regu=0.056,lstm=1253/weights.0024-1.4515.hdf5
+#MODEL_WEIGHTS=/media/labuser/Flight_data1/maciej-cnn-7scenes-results-initial/10_21_2017--02-37-36/office/stateful-lstm-naive_homoscedastic-googlenet-places365/checkpoints/L2,decay=10,beta=227.7,lr=1.38e-04,dropout=0.432,l2_regu=0.034,lstm=843/weights.0038--1.0286.hdf5
 
-TOP_MODEL_WEIGHTS=
+MODEL_WEIGHTS=/media/labuser/Flight_data1/maciej-cnn-7scenes-results-initial/11_07_2017--21-18-00/office/spatial-lstm_quaternion-error-weighted_vgg16_hybrid1365_seqlen=4/gamma=1,decay=5,beta=463.7,l_rate=1.27e-04,dropout=0.000,l2_regu=0.000,lstm_units=104,build=standard,r_act=tanh/checkpoints/weights.0006-15.2281.hdf5
 
 LOSSES=(
-  #only_position
-  #only_quaternion
-  #quaternion_angle_homoscedastic
-  quaternion_error_homoscedastic
-  #naive_homoscedastic
-  #naive_weighted
-  #quaternion_error_weighted
-  #quaternion_angle_weighted
+  #only-position
+  #only-quaternion
+  #quaternion-angle-homoscedastic
+  #quaternion-error-homoscedastic
+  #naive-homoscedastic
+  #naive-weighted
+  quaternion-error-weighted
+  #quaternion-angle-weighted
 )
 
 if [[ "${MODE}" == "finetune" ]]; then
@@ -67,9 +68,11 @@ fi
 if [ "${RANDOM_CROP}" == true ]; then
   echo "RANDOM CROPS ENABLED!"
   random_crop_prefix="random_crop_"
+  random_crops_flag="--random-crops"
 else
   echo "RANDOM CROPS DISABLED!"
   random_crop_prefix=""
+  random_crops_flag="--no-random-crops"
 fi
 
 for i in `seq $ITERS`; do
@@ -106,21 +109,23 @@ for i in `seq $ITERS`; do
             train_seq_feature_dirs+=("${scene_dir}/extracted_sequences/${arch}/${dataset}/random_crops_${feature_type}_features.npy")
           fi
 
-        elif [[ "${topmodeltype}" == "stateful-lstm" ]] || [[ "${topmodeltype}" == "stateless-lstm" ]]; then
+        elif [[ "${topmodeltype}" == "stateful-lstm" ]] || [[ "${topmodeltype}" == "standard-lstm" ]]; then
           
           lstm_type=$(echo "${topmodeltype}" | cut -d- -f1)
 
-          train_seq_feature_dirs+=("${scene_dir}/extracted_sequences/${arch}/${dataset}/${lstm_type}_${feature_type}_train_features_seqs.npy")
-          train_seq_label_dirs+=("${scene_dir}/extracted_sequences/${arch}/${dataset}/${lstm_type}_${feature_type}_train_labels_seqs.npy")
+          prefix="${scene_dir}/extracted_sequences/${arch}/${dataset}/${lstm_type}/${SEQ_LEN}/"
+
+          train_seq_feature_dirs+=("${prefix}/${lstm_type}_${feature_type}_train_features_seqs.npy")
+          train_seq_label_dirs+=("${prefix}/${lstm_type}_${feature_type}_train_labels_seqs.npy")
           
-          valid_seq_feature_dirs+=("${scene_dir}/extracted_sequences/${arch}/${dataset}/${lstm_type}_${feature_type}_val_features_seqs.npy")
-          valid_seq_label_dirs+=("${scene_dir}/extracted_sequences/${arch}/${dataset}/${lstm_type}_${feature_type}_val_labels_seqs.npy")
+          valid_seq_feature_dirs+=("${prefix}/${lstm_type}_${feature_type}_val_features_seqs.npy")
+          valid_seq_label_dirs+=("${prefix}/${lstm_type}_${feature_type}_val_labels_seqs.npy")
         
         fi
         
         for loss in "${LOSSES[@]}"; do     
 
-          output_dir="${OUTPUT_DIR}/${DATE}/${scene}/${topmodeltype}-${loss}-${arch}-${dataset}/"
+          output_dir="${OUTPUT_DIR}/${DATE}/${scene}/${topmodeltype}_${loss}_${arch}_${dataset}_seqlen=${SEQ_LEN}/"
           mkdir -p "${output_dir}"
 
           python -m "${MODULE}" \
@@ -140,8 +145,8 @@ for i in `seq $ITERS`; do
             --batch-size "${BATCH_SIZE}" \
             --save-period 1 \
             --seq-len "${SEQ_LEN}" \
-            --top-model-weights "${TOP_MODEL_WEIGHTS}" \
-            --random-crops "${RANDOM_CROP}"
+            --model-weights "${MODEL_WEIGHTS}" \
+            "${random_crops_flag}"
           exit 1
         done
       done

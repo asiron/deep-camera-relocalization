@@ -41,26 +41,22 @@ class GoogleNet(object):
       weights_dir, '{}_finetuning.h5'.format(self.dataset))
     finetuning_model = load_model(finetuning_model_file)
 
+    googlenet_base_file = os.path.join(
+      weights_dir, '{}_base.h5'.format(self.dataset))
+    googlenet_base = load_model(googlenet_base_file, custom_objects={'LRN': LRN})
+
     if self.mode == 'extract':
-
-      googlenet_base_file = os.path.join(
-        weights_dir, '{}_base.h5'.format(self.dataset))
-      googlenet_base = load_model(googlenet_base_file, custom_objects={'LRN': LRN})
-
       input_layer = Input(shape=self.input_shape, name='extract_input')
-
       base = googlenet_base(input_layer)
       heads = finetuning_model(base)
-
-      if isinstance(heads, list):
-        outputs = [heads[0], heads[1], heads[2], base]
-      else:
-        outputs = [heads, base]
-        
-      return Model(inputs=input_layer, outputs=outputs)
+      return Model(inputs=input_layer, outputs=[heads, base])
 
     elif self.mode == 'finetune':
       return finetuning_model
+
+    elif self.mode == 'base':
+      return googlenet_base
+
 
   def preprocess_image(self, image):
     '''

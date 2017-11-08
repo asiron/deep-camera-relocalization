@@ -18,8 +18,6 @@ def main():
     help='Batch size for image feature extraction')
   parser.add_argument('--resize', type=str, required=True,
     help='Size to resize the image')
-  parser.add_argument('-r', '--random-crops', type=int, default=0,
-    help='Random crops per image')
   parser.add_argument('-s', '--seed', type=int, default=42,
     help='PRNG seed')
 
@@ -37,16 +35,12 @@ def main():
 
     image_filenames = f.read().splitlines()[0].split(' ')[:-1]
     image_count = len(image_filenames)
-    if args.random_crops:
-      total = (image_count / args.batch_size) * args.random_crops
-    else:
-      total = (image_count / args.batch_size)
+    total = int(np.ceil(image_count / float(args.batch_size)))
 
     image_generator, _ = generate_images_from_filenames(
       image_filenames, 
       batch_size=args.batch_size, 
-      resize=new_height,
-      random_crops=args.random_crops
+      resize=(new_height, new_width)
     )
 
     sums = sum(b.sum(axis=0)

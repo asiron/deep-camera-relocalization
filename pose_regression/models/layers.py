@@ -1,19 +1,27 @@
-from keras.layers import Lambda
-from keras.engine.topology import Layer
+from keras.layers import Lambda, Layer
 from keras.initializers import Constant
 
 import keras.backend as K
 
-class QuaternionNormalization(Lambda):
+class QuaternionNormalization(Layer):
 
-  def __init__(self, name=None):
-    
-    def layer(x):
-      pos, quat = x[..., :3], x[..., 3:]
-      quat = K.l2_normalize(quat, axis=-1)
-      return K.concatenate([pos, quat], axis=-1)
-    
-    super(QuaternionNormalization, self).__init__(layer, name=name)
+  def __init__(self, **kwargs):
+    super(QuaternionNormalization, self).__init__(**kwargs)
+
+  def build(self, input_shape):
+    super(QuaternionNormalization, self).build(input_shape)
+
+  def call(self, x):
+    pos, quat = x[..., :3], x[..., 3:]
+    quat = K.l2_normalize(quat, axis=-1)
+    return K.concatenate([pos, quat], axis=-1)
+  
+  def compute_output_shape(self, input_shape):
+    print(input_shape)
+    return input_shape
+
+  # def get_config(self):
+  #   return super(QuaternionNormalization, self).get_config()
 
 class HomoscedasticLoss(Layer):
 
@@ -39,4 +47,7 @@ class HomoscedasticLoss(Layer):
   def get_config(self):
     config = {'log_variance_init': self.log_variance_init}
     base_config = super(HomoscedasticLoss, self).get_config()
-    return dict(list(base_config.items()) + list(config.items()))
+    new_config = dict(list(base_config.items()) + list(config.items()))
+    print('NEW CONFIG')
+    print(new_config)
+    return new_config

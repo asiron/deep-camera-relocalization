@@ -16,8 +16,8 @@ def load_dataset(features_files, labels_files):
   return features, labels
 
 def search_files(directory, pattern):
-  return [os.path.join(directory, f) 
-    for f in os.listdir(directory) if re.search(pattern, f)]
+  return sorted([os.path.join(directory, f) 
+    for f in os.listdir(directory) if re.search(pattern, f)])
 
 def get_mmaps(directory, feature_type, dataset_type):
   pattern = '^[0-9].*_{feature_type}_{dataset_type}_{{labels_or_features}}'.format(
@@ -65,7 +65,9 @@ def concatenate_without_loading(dir, feature_type, dataset_type):
   features_mmaps, labels_mmaps = load_mmaps(dir, feature_type, dataset_type)
   print([x.shape for x in features_mmaps])
   print([x.shape for x in labels_mmaps])
-  total_num_seqs = reduce(lambda x,y: x + y.shape[0], features_mmaps, 0)
+  total_num_seqs = reduce(lambda x,y: x + len(y), features_mmaps, 0)
+
+  print(total_num_seqs)
 
   final_features_shape = (total_num_seqs,) + features_mmaps[0].shape[1:]
   final_standard_features_path = os.path.join(dir,
@@ -79,21 +81,23 @@ def concatenate_without_loading(dir, feature_type, dataset_type):
   final_standard_labels = open_memmap(final_standard_labels_path,
     dtype=np.float32, mode='w+', shape=final_labels_shape)
 
+  from_idx, to_idx = 0, 0
   for n, (f_mmap, l_mmap) in enumerate(zip(features_mmaps, labels_mmaps)):
 
-    from_idx = n * len(features_mmaps[0])
-    to_idx = (n+1) * len(features_mmaps[0])
+    to_idx = from_idx + len(f_mmap)
     final_standard_features[from_idx:to_idx] = f_mmap
     final_standard_labels[from_idx:to_idx]   = l_mmap
+    from_idx = to_idx
 
   del final_standard_features, final_standard_labels
-  #delete_mmaps(dir, feature_type, dataset_type)
+  delete_mmaps(dir, feature_type, dataset_type)
 
 def process_dataset(features_files, labels_files, dataset_type='train',
                    sequence_type='stateful', feature_type='cnn', output_dir=None,
                    **kwargs):
   
   print('Loading {} sequences...'.format(dataset_type))
+
   features = [np.squeeze(np.load(f, mmap_mode='r')) for f in features_files]
   labels   = [np.squeeze(load_labels(l)) for l in labels_files]
 
@@ -122,10 +126,11 @@ def process_dataset(features_files, labels_files, dataset_type='train',
 
   elif sequence_type == 'standard':
 
+    step = kwargs['step']
     subseq_len = kwargs['subseq_len']
     
     for n, (fs, ls) in enumerate(make_standard_sequences(features, labels,
-      subseq_len=subseq_len)):
+      subseq_len=subseq_len, step=step, repeat=True)):
 
       sequence_type = '{:02d}_standard'.format(n)
 
@@ -162,9 +167,10 @@ def main():
   parser.add_argument('-o', '--output', required=True, 
     help='Path to an output dir where numpy arrays should be saved')
  
-  parser.add_argument('--seq-len',    type=int, help='Sequence length fir a stateful LSTM')
+  parser.add_argument('--seq-len',    type=int, help='Sequence length for a stateful LSTM')
   parser.add_argument('--batch-size', type=int, help='Batch size for a stateful LSTM')
   parser.add_argument('--subseq-len', type=int, help='Sub-sequence length for standard LSTM')
+  parser.add_argument('--step',       type=int, help='Step length for a standard LSTM')
 
   parser.add_argument('--type', choices=['stateful', 'standard', 'regressor'],
     help='Output the seqences into Stateful or Stateless LSTM input shape')
@@ -177,11 +183,11 @@ def main():
     raise ValueError('Batch size and sequence length have to be specified' + 
                      'in stateful LSTM mode')
 
-  elif args.type == 'standard' and not args.subseq_len:
-    raise ValueError('Sub-sequence length has to be specified' + 
+  elif args.type == 'standard' and not (args.subseq_len and args.step):
+    raise ValueError('Sub-sequence length and step size has to be specified' + 
                      'in standard LSTM mode')
 
-  kwargs = {k: vars(args)[k] for k in ('batch_size', 'subseq_len', 'seq_len')}
+  kwargs = {k: vars(args)[k] for k in ('batch_size', 'subseq_len', 'seq_len', 'step')}
 
   process_dataset(args.train_features, args.train_labels, dataset_type='train',
                   sequence_type=args.type, feature_type=args.feature_type, 

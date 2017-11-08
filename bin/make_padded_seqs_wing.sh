@@ -2,7 +2,6 @@
 
 MODULE="pose_regression.scripts.make_padded_sequences"
 
-
 #WING_DATASET=wing
 WING_DATASET=wing-5
 
@@ -17,14 +16,15 @@ FEATURE_TYPES=(
 CONFIGS=(
   ##stateful,83,36,-1
   ##standard,83,-1,5
-  stateful,72,30,-1
-  #standard,83,-1,5
+  #stateful,72,30,-1
+  standard,-1,-1,5,1
 )
 
 NETS=(
-  googlenet,imagenet
-  googlenet,places365
-  inception_resnet_v2,imagenet
+  #googlenet,imagenet
+  #googlenet,places365
+  #inception_resnet_v2,imagenet
+  vgg16,hybrid1365
 )
 
 OUTPUT_DIR="${DATASET_DIR}"
@@ -32,9 +32,9 @@ OUTPUT_DIR="${DATASET_DIR}"
 for feature_type in "${FEATURE_TYPES[@]}"; do
 
   for config in "${CONFIGS[@]}"; do
-    IFS=',' read type seq_len batch_size subseq_len <<< "${config}"
+    IFS=',' read type seq_len batch_size subseq_len step <<< "${config}"
     
-    echo "Processing config: ${type} ${seq_len} ${batch_size} ${subseq_len}"    
+    echo "Processing config: ${type} ${seq_len} ${batch_size} ${subseq_len}" "${step}"    
 
     for net in "${NETS[@]}"; do 
       IFS=',' read arch dataset <<< "${net}"
@@ -55,9 +55,15 @@ for feature_type in "${FEATURE_TYPES[@]}"; do
       for seq in ${DATASET_DIR}/position_*/test/seq_*; do
         valid_seq_label_dirs+=("${seq}/labels")
         valid_seq_feature_dirs+=("${seq}/extracted_features/${arch}/${dataset}/${feature_type}_features.npy")
-      done  
+      done
       
-      output_dir="${OUTPUT_DIR}/extracted_sequences/${arch}/${dataset}/"
+      if [[ "${type}" == "standard" ]]; then
+        length="${subseq_len}"
+      elif [[ "${type}" == "stateful" ]]; then
+        length="${seq_len}"  
+      fi
+
+      output_dir="${OUTPUT_DIR}/extracted_sequences/${arch}/${dataset}/${type}/${length}"
       mkdir -p "${output_dir}"
 
       python -m "${MODULE}" \
@@ -70,7 +76,8 @@ for feature_type in "${FEATURE_TYPES[@]}"; do
         --seq-len "${seq_len}" \
         --type "${type}" \
         --batch-size "${batch_size}" \
-        --subseq-len "${subseq_len}"
+        --subseq-len "${subseq_len}" \
+        --step "${step}"
     done
   done
 done

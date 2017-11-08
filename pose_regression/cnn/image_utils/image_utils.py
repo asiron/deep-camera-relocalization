@@ -2,12 +2,12 @@ import scipy.misc
 import numpy as np
 import uuid, os
 
-def load_and_process(image_filename, new_size, random_crop=False, save=False):
+def load_and_process(image_filename, resize, random_crop=False, save=True):
   '''
   Loads the image in RGB mode (channels last) and preprocesses it
   '''
   image = scipy.misc.imread(image_filename, mode='RGB')
-  image = preprocess_image(image, new_size, random_crop=random_crop)
+  image = preprocess_image(image, resize, random_crop=random_crop)
   
   if save:
     dirname = os.path.join(os.path.dirname(image_filename), 'crops')
@@ -23,7 +23,7 @@ def load_and_process(image_filename, new_size, random_crop=False, save=False):
 
   return image
 
-def preprocess_image(img, new_size, random_crop=False, 
+def preprocess_image(img, resize, random_crop=False, 
   random_crop_pixel_variance=20):
   '''
   Resizes, crops and scales the image to 
@@ -36,17 +36,17 @@ def preprocess_image(img, new_size, random_crop=False,
   if img.shape[0] > img.shape[1]:
     raise ValueError('Image is not in HW format (Height, Width')
 
-  if random_crop:
-    img = crop(img, img.shape[0], crop_type='center')
-    resized_length = new_size + random_crop_pixel_variance
-    img = scipy.misc.imresize(img, (resized_length, resized_length))
-    img = crop(img, new_size, crop_type='random')
-  else:
-    aspect_ratio = img.shape[1] / float(img.shape[0])
-    resized_height = new_size
-    resized_width = int(resized_height * aspect_ratio)
-    img = scipy.misc.imresize(img, (resized_height, resized_width))
-    img = crop(img, new_size, crop_type='center')
+  # if random_crop:
+  #   img = crop(img, img.shape[0], crop_type='center')
+  #   resized_length = new_size + random_crop_pixel_variance
+  #   img = scipy.misc.imresize(img, (resized_length, resized_length))
+  #   img = crop(img, new_size, crop_type='random')
+  # else:
+  aspect_ratio = img.shape[1] / float(img.shape[0])
+  resized_height = resize[0]
+  resized_width = int(resized_height * aspect_ratio)
+  img = scipy.misc.imresize(img, (resized_height, resized_width))
+  img = crop(img, resize, crop_type='center')
 
   return img.astype(float)
 
@@ -54,12 +54,12 @@ def crop(img, new_size, crop_type='random'):
   '''Center crops the image to a desired (new_height, new_width) format'''
   y, x = img.shape[:2]
   if crop_type == 'random':
-    startx = np.random.randint(0, x - new_size)
-    starty = np.random.randint(0, y - new_size)
+    startx = np.random.randint(0, x - new_size[1])
+    starty = np.random.randint(0, y - new_size[0])
   elif crop_type == 'center':
-    startx = x // 2 - (new_size // 2)
-    starty = y // 2 - (new_size // 2)    
-  return img[starty:starty+new_size, startx:startx+new_size]
+    startx = x // 2 - (new_size[1] // 2)
+    starty = y // 2 - (new_size[0] // 2)    
+  return img[starty:starty+new_size[0], startx:startx+new_size[1]]
 
 def scale_image(img):
   '''Scales images s.t. each pixel is in [-1, 1] range'''

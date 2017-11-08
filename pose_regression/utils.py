@@ -1,6 +1,7 @@
 from __future__ import print_function
 
 import numpy as np
+import matplotlib.pyplot as plt
 
 from tqdm import tqdm
 from itertools import izip
@@ -11,8 +12,9 @@ from numpy.lib.format import open_memmap
 
 from keras.models import Model
 from keras.callbacks import Callback, CSVLogger, TensorBoard
-from cnn.image_utils import load_and_process
 
+from cnn.image_utils import load_and_process
+from models.metrics import PoseMetrics
 
 LABEL_PATTERN = 'pos_[0-9]*.txt'
 IMAGE_PATTERN = '^image_[0-9]{5}\.(png|jpg)$'
@@ -50,7 +52,7 @@ def load_labels(directory, pattern=LABEL_PATTERN):
   return np.array(labels)
 
 def generate_images_from_filenames(image_filenames, batch_size=10, 
-  resize=224, random_crops=False, func=lambda x: x):
+  resize=(224, 224), random_crops=False, func=lambda x: x):
   '''
   Generator, which yields processed images in batches from a directory
   Preprocessing does the following:
@@ -144,13 +146,33 @@ def make_stateful_sequences(features, labels, seq_len=None, batch_size=None):
   labels = np.squeeze(reshape_to_stateful_input(labels, batch_size))
   return features, labels
 
-def make_standard_sequences(Xs, Ys, subseq_len=None, step=1):
-  for i, (X_seq, Y_seq) in enumerate(izip(Xs, Ys)):
-    X_sequences, Y_sequences = [], []
-    for i in range(0, len(X_seq)-subseq_len+1, step):
-      X_sequences.append(X_seq[i: i+subseq_len])
-      Y_sequences.append(Y_seq[i: i+subseq_len])
-    yield np.array(X_sequences), np.array(Y_sequences)
+def make_standard_sequences(Xs, Ys, 
+  subseq_len=None, step=1, repeat=True):
+
+  if repeat:
+    for (X_seq, Y_seq) in izip(Xs, Ys):
+      X_sequences, Y_sequences = [], []
+      for n in xrange(0, len(X_seq) - subseq_len + 1, step):
+        X_sequences.append(X_seq[n:n+subseq_len])
+        Y_sequences.append(Y_seq[n:n+subseq_len])
+      yield np.array(X_sequences), np.array(Y_sequences)    
+
+  else:
+    for (X_seq, Y_seq) in izip(Xs, Ys):
+      X_sequences, Y_sequences = [], []
+
+      block_len = subseq_len * step
+      n_blocks = len(X_seq) // block_len
+
+      for n in xrange(n_blocks):
+        start_idx, end_idx = n*block_len, (n+1)*block_len
+        base_idxs = np.arange(start_idx, end_idx, step)
+        for i in xrange(step):
+          print(base_idxs+i)
+          X_sequences.append(X_seq[base_idxs+i])
+          Y_sequences.append(Y_seq[base_idxs+i])
+
+      yield np.array(X_sequences), np.array(Y_sequences)
 
 def search_layer(model, layer_name):
   found_layer = None
@@ -298,15 +320,14 @@ class ExtendedLogger(Callback):
       y_pred = self.prediction_model.predict(val_data[:-1], 
         batch_size=batch_size, verbose=1, callback=callback)
 
-      print(y_pred.shape)
-      print(y_true.shape)
+      print(y_true.shape, y_pred.shape)
 
-      #y_pred = y_pred[..., -1, :]
-      #y_true = y_true[..., -1, :]
-      y_pred = y_pred.reshape([-1, 7])
-      y_true = y_true.reshape([-1, 7])
+      self.write_prediction(epoch, y_true, y_pred)
 
-      self.write_prediction(epoch, y_pred=y_pred, y_true=y_true)
+      y_true = y_true.reshape((-1, 7))
+      y_pred = y_pred.reshape((-1, 7))
+
+      self.add_error_histograms(epoch, y_true, y_pred)
 
       new_logs = {name: np.array(metric(y_true, y_pred))
         for name, metric in self.val_data_metrics.items()}
@@ -334,23 +355,44 @@ class ExtendedLogger(Callback):
     if homo_pos_loss_layer:
       homo_pos_log_vars = np.array(homo_pos_loss_layer.get_weights()[0])
       homo_quat_log_vars = np.array(homo_quat_loss_layer.get_weights()[0])
-      homo_pos_log_vars = { 
-        'pos_log_var_{:03d}'.format(n) : np.array(v) for n, v in
-        enumerate(homo_pos_log_vars)}
-      homo_quat_log_vars = { 
-        'quat_log_var_{:03d}'.format(n) : np.array(v) for n, v in
-        enumerate(homo_quat_log_vars)}
-      homo_log_vars = {}
-      homo_log_vars.update(homo_pos_log_vars)
-      homo_log_vars.update(homo_quat_log_vars)
-      return homo_log_vars
+      return {
+        'pos_log_var' : np.array(homo_pos_log_vars), 
+        'quat_log_var' : np.array(homo_quat_log_vars), 
+      }
     else:
       return {}
 
-  def write_prediction(self, epoch, y_pred=None, y_true=None):
-    if y_pred is None or y_true is None:
-      raise ValueError('y_pred or y_true was None!')
-    filename = 'predictions_{:04d}.npy'.format(epoch)
+  def write_prediction(self, epoch, y_true, y_pred):
+    filename = '{:04d}_predictions.npy'.format(epoch)
     filename = os.path.join(self.csv_dir, filename)
     arr = {'y_pred': y_pred, 'y_true': y_true}
     np.save(filename, arr)
+
+  def add_error_histograms(self, epoch, y_true, y_pred):
+    pos_errors = PoseMetrics.abs_errors_position(y_true, y_pred)
+    pos_errors = np.sort(pos_errors)
+
+    angle_errors = PoseMetrics.abs_errors_orienation(y_true, y_pred)
+    angle_errors = np.sort(angle_errors)
+
+    size = len(y_true)
+    ys = np.arange(size)/float(size)
+    
+    plt.clf()
+
+    plt.subplot(2, 1, 1)
+    plt.title('Empirical CDF of absolute errors')
+    plt.grid(True)
+    plt.plot(pos_errors, ys, 'k-')
+    plt.xlabel('Absolute Position Error (m)')
+    plt.xlim(0, 1.2)
+
+    plt.subplot(2, 1, 2)
+    plt.grid(True)
+    plt.plot(angle_errors, ys, 'r-')
+    plt.xlabel('Absolute Angle Error (deg)')
+    plt.xlim(0, 70)
+
+    filename = '{:04d}_cdf.pdf'.format(epoch)
+    filename = os.path.join(self.csv_dir, filename)
+    plt.savefig(filename)

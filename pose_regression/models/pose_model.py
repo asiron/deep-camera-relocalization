@@ -8,29 +8,31 @@ import keras.backend as K
 
 import top_models, losses, layers
 
+from ..cnn.vgg16.vgg16 import VGG16
 from ..cnn.googlenet.googlenet import GoogleNet
 from ..cnn.inception_resnet_v2.inception_resnet_v2 import InceptionResNetV2
 
 class PoseModel(object):
 
-  FINETUNING_MODELS = {
+  CNN_MODELS = {
+    'vgg16' : VGG16,
     'googlenet' : GoogleNet,
     'inception_resnet_v2' : InceptionResNetV2
   }
 
   TOPMODELS = {
     'spatial-lstm' : top_models.SpatialLSTM,
-    'stateless-lstm' : top_models.StatelessLSTM,
+    'standard-lstm' : top_models.StandardLSTM,
     'stateful-regressor-lstm' : top_models.RegressorLSTM,
     'stateful-lstm' : top_models.StatefulLSTM,
     'regressor' : top_models.Regressor
   }
 
-  MODES = ['initial', 'finetune']
+  MODES = ['initial', 'finetune', 'predict']
 
   def __init__(self, input_shape=None, top_model_type='regressor', 
-    model_loss='naive_weighted', mode='initial', finetuning_model_arch=None, 
-    finetuning_model_dataset=None, topmodel_weights=None, batch_size=None,
+    model_loss='naive-weighted', mode='initial', finetuning_model_arch=None, 
+    finetuning_model_dataset=None, model_weights=None, batch_size=None,
     seq_len=None, **hyperparams):
     '''
     Creates a PoseModel, which can be used for initial learning or finetuning
@@ -54,7 +56,8 @@ class PoseModel(object):
     if mode not in PoseModel.MODES:
       raise ValueError('mode has to be one of {}'.format(PoseModel.MODES))
 
-    if mode == 'finetune' and not (finetuning_model_arch and finetuning_model_dataset):
+    if mode in ['finetune', 'predict'] \
+      and not (finetuning_model_arch and finetuning_model_dataset):
       raise ValueError(('If mode is set to finetune, architecture ',
         'and dataset have to be given!'))
 
@@ -64,8 +67,8 @@ class PoseModel(object):
     if 'stateful' in top_model_type and batch_size is None:
       raise ValueError('Batch size has to be specified in stateful LSTM!')
 
-    if 'stateless' in top_model_type and seq_len is None:
-      raise ValueError('Sequence length has to be specified in stateless LSTM!')
+    if 'standard' in top_model_type and seq_len is None:
+      raise ValueError('Sequence length has to be specified in standard LSTM!')
 
 
     self.input_shape = input_shape
@@ -74,7 +77,7 @@ class PoseModel(object):
     self.mode = mode
     self.finetuning_model_arch = finetuning_model_arch
     self.finetuning_model_dataset = finetuning_model_dataset
-    self.topmodel_weights = topmodel_weights
+    self.model_weights = model_weights
     self.batch_size = batch_size
     self.seq_len = seq_len
     self.hyperparams = hyperparams
@@ -94,16 +97,15 @@ class PoseModel(object):
       else:
         top_model_output = top_model_builder.build(main_input)
 
-    elif self.mode == 'finetune':
+    elif self.mode in ['finetune', 'predict']:
 
       finetune_model = self.make_finetuning_model()
       main_input_shape = finetune_model.input_shape[1:]
 
-      if 'stateless' in self.top_model_type:
+      if 'standard' in self.top_model_type:
         finetune_model = TimeDistributed(finetune_model)
 
       main_input = self.make_input_shape(main_input_shape, name='main_input')
-      print(main_input)
       finetune_output = finetune_model(main_input)
 
       if 'stateful' in self.top_model_type:
@@ -115,7 +117,10 @@ class PoseModel(object):
 
     if 'homoscedastic' in self.model_loss:
       '''Adding Homoscedastic Loss as last layers to the model'''
-      loss = dummy_loss = {'loss_output' : lambda y_true, y_pred: y_pred} 
+      def loss(y_true, y_pred):
+        return y_pred
+
+      loss = dummy_loss = losses.DummyLoss()
       labels_input = self.make_input_shape((7,), name='labels_input')
       loss_output = self.add_homoscedastic_loss(top_model_output, labels_input)
       self.model = Model(inputs=[main_input, labels_input], outputs=loss_output)
@@ -123,37 +128,66 @@ class PoseModel(object):
       loss = losses.LOSSES[self.model_loss](**self.hyperparams)
       self.model = Model(inputs=[main_input], outputs=top_model_output)
 
-    if self.mode == 'finetune' and self.topmodel_weights:
-      print('Loading weights of the top-model from {}.'.format(self.topmodel_weights))
-      self.model.load_weights(self.topmodel_weights, by_name=True) 
+    if self.mode in ['finetune', 'predict'] and self.model_weights:
+      print('Loading weights of the model from {}.'.format(self.model_weights))
+      self.model.load_weights(self.model_weights, by_name=True) 
 
-    #optimizer = SGD(lr=self.hyperparams['l_rate'], momentum=0.9)
-    optimizer = Adam(lr=self.hyperparams['l_rate'])
+    optimizer = Adam(lr=float(self.hyperparams['l_rate']))
     self.model.compile(optimizer=optimizer, loss=loss)
     self.model.summary()
     return self.model
 
   def make_finetuning_model(self):
-    finetuning_model_class = PoseModel.FINETUNING_MODELS[self.finetuning_model_arch]
-    return finetuning_model_class(
+    finetuning_model_class = PoseModel.CNN_MODELS[self.finetuning_model_arch]
+    finetuning_model = finetuning_model_class(
       dataset=self.finetuning_model_dataset, 
       mode='finetune').build()
 
+    if self.mode == 'finetune':
+      return finetuning_model
+
+    elif self.mode == 'predict':
+      base_model_class = PoseModel.CNN_MODELS[self.finetuning_model_arch]
+      base_model = base_model_class(dataset=self.finetuning_model_dataset,
+        mode='base').build()
+      predict_model = Sequential()
+      predict_model.add(base_model)
+      predict_model.add(finetuning_model)
+      return predict_model
+    
+    else:
+      raise ValueError('finetune or predict model only!')
+
   def add_homoscedastic_loss(self, top_model_output, labels_input):
-    if 'stateless' in self.top_model_type:
+    if 'standard' in self.top_model_type:
       merged = Concatenate(axis=-1)([top_model_output, labels_input])
-      pq_losses = TimeDistributed(losses.LOSSES[self.model_loss](name='pq_losses',
-        stateless=True, **self.hyperparams))(merged)
-      p_loss = TimeDistributed(Lambda(lambda x: K.expand_dims(x[..., 0], axis=-1)))(pq_losses)
-      q_loss = TimeDistributed(Lambda(lambda x: K.expand_dims(x[..., 1], axis=-1)))(pq_losses)
+      pq_losses = TimeDistributed(
+        losses.LOSSES[self.model_loss](
+          name='pq_losses',
+          is_lstm=True,
+          **self.hyperparams), name='td_pq_losses')(merged)
       p_loss = TimeDistributed(
-        layers.HomoscedasticLoss(0, name='homo_p_loss'),
+        Lambda(
+          lambda x: K.expand_dims(x[..., 0], axis=-1),
+          name='expand_p_loss_dim'),
+        name='td_expand_p_loss_dim')(pq_losses)
+      q_loss = TimeDistributed(
+        Lambda(
+          lambda x: K.expand_dims(x[..., 1], axis=-1),
+          name='expand_q_loss_dim'),
+        name='td_expand_q_loss_dim')(pq_losses)
+      p_loss = TimeDistributed(
+        layers.HomoscedasticLoss(0,  name='homo_p_loss'),
         name='homo_pos_loss')(p_loss)
       q_loss = TimeDistributed(
         layers.HomoscedasticLoss(-3, name='homo_q_loss'),
         name='homo_quat_loss')(q_loss)
-      pq_concat = Concatenate(axis=-1)([p_loss, q_loss])
-      return TimeDistributed(Lambda(lambda x: K.sum(x, axis=-1)), name='loss_output')(pq_concat)
+      pq_concat = Concatenate(axis=-1, name='concat_pq_losses')([p_loss, q_loss])
+      return TimeDistributed(
+          Lambda(
+            lambda x: K.sum(x, axis=-1),
+            name='loss_output_inner'), 
+        name='loss_output')(pq_concat)
     
     else:
       pq_losses = losses.LOSSES[self.model_loss](name='pq_losses',
@@ -161,7 +195,7 @@ class PoseModel(object):
 
       p_loss = Lambda(lambda x: K.expand_dims(x[..., 0], axis=-1))(pq_losses)
       q_loss = Lambda(lambda x: K.expand_dims(x[..., 1], axis=-1))(pq_losses)
-      p_loss = layers.HomoscedasticLoss(0, name='homo_pos_loss')(p_loss)
+      p_loss = layers.HomoscedasticLoss(0,  name='homo_pos_loss')(p_loss)
       q_loss = layers.HomoscedasticLoss(-3, name='homo_quat_loss')(q_loss)
       return Add(name='loss_output')([p_loss, q_loss]) 
 
@@ -169,7 +203,7 @@ class PoseModel(object):
     if 'stateful' in self.top_model_type:
       batch_shape=(self.batch_size,) + shape
       return Input(batch_shape=batch_shape, name=name)
-    elif 'stateless' in self.top_model_type:
+    elif 'standard' in self.top_model_type:
       return Input(shape=(self.seq_len,) + shape, name=name)
     else:
       return Input(shape=shape, name=name)

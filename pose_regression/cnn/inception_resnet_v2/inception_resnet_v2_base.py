@@ -345,7 +345,10 @@ def InceptionResNetV2(include_top=True,
 
     # Create model
     model = Model(inputs, x, name='inception_resnet_v2')
+    model = load_weights(model, weights=weights, include_top=include_top)
+    return model
 
+def load_weights(model, weights='imagenet', include_top=True, by_name=False):
     # Load weights
     if weights == 'imagenet':
         if K.image_data_format() == 'channels_first':
@@ -370,6 +373,5 @@ def InceptionResNetV2(include_top=True,
                                     BASE_WEIGHT_URL + weights_filename,
                                     cache_subdir='models',
                                     file_hash='d19885ff4a710c122648d3b5c3b684e4')
-        model.load_weights(weights_path)
-
+        model.load_weights(weights_path, by_name=by_name)
     return model

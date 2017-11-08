@@ -1,7 +1,7 @@
 from keras.layers import Input, GlobalAveragePooling2D, AveragePooling2D
 from keras.models import Model, Sequential
 
-from .inception_resnet_v2_base import preprocess_input, inception_resnet_block, conv2d_bn
+from .inception_resnet_v2_base import preprocess_input, inception_resnet_block, conv2d_bn, load_weights
 from .inception_resnet_v2_base import InceptionResNetV2 as BaseModel
 
 from ..image_utils.image_utils import scale_image
@@ -59,10 +59,11 @@ class InceptionResNetV2(object):
 
       # Final convolution block: 8 x 8 x 1536
       x = conv2d_bn(x, 1536, 1, name='conv_7b')
-      top_model_output = GlobalAveragePooling2D()(x)
+      finetune_model_output = GlobalAveragePooling2D()(x)
 
-      self.model = Model(inputs=top_model_input, outputs=top_model_output)
-    
+      self.model = Model(inputs=top_model_input, outputs=finetune_model_output)
+      self.model = load_weights(self.model, include_top=False, weights=self.dataset, by_name=True)
+
     return self.model
 
   def preprocess_image(self, images):

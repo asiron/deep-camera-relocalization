@@ -19,6 +19,9 @@ from utils import (
   ExtendedLogger,
   ResetStatesCallback,
   reshape_to_stateful_input)
+import cnn
+
+import keras.backend as K
 
 def create_callbacks(output='/tmp', prediction_layer=None, 
   run_identifier=None, l_rate_scheduler=None, save_period=1):
@@ -30,37 +33,37 @@ def create_callbacks(output='/tmp', prediction_layer=None,
   @see .losses
   '''
   early_stopper = EarlyStopping(monitor='val_loss', min_delta=0.0, 
-    patience=100, verbose=1)
+    patience=7, verbose=1)
 
   #lrscheduler = LearningRateScheduler(l_rate_scheduler)
 
-  tb_directory  = os.path.join(output, 'tensorboard', run_identifier)
-  csv_directory = os.path.join(output, 'csv', run_identifier)
+  output = os.path.join(output, run_identifier)
+
+  mc_directory  = os.path.join(output, 'checkpoints')
+  tb_directory  = os.path.join(output, 'tensorboard')
+  csv_directory = os.path.join(output, 'csv')
 
   logger = ExtendedLogger(prediction_layer,
     csv_dir=csv_directory, tb_dir=tb_directory)
   logger.add_validation_metrics(metrics.PoseMetrics.get_all_metrics())
 
-  mc_directory = os.path.join(
-    output,
-    'checkpoints',
-    run_identifier
-  )
+
   make_dir(mc_directory)
   checkpoint_pattern = 'weights.{epoch:04d}-{val_loss:.4f}.hdf5'
   checkpoint_path = os.path.join(mc_directory, checkpoint_pattern)
   model_checkpoint = ModelCheckpoint(
     checkpoint_path,
-    save_weights_only=True,
+    save_weights_only=False,
     save_best_only=False,
     period=save_period
   )
 
   reduce_lr = ReduceLROnPlateau(
     monitor='val_loss',
-    factor=0.7,
-    patience=0,
+    factor=0.8,
+    patience=2,
     min_lr=1e-6,
+    cooldown=1,
     verbose=True,
     epsilon=1e-4)
 
@@ -101,6 +104,48 @@ def hyperparam_search(model_class, X_train, y_train, X_val, y_val,
     model = model_class(**hyperparams).build()
     model.summary()
 
+    #K.set_learning_phase(1)
+
+    # def get_json_type(obj):
+    #   """Serialize any object to a JSON-serializable structure.
+    #   # Arguments
+    #       obj: the object to serialize
+    #   # Returns
+    #       JSON-serializable structure representing `obj`.
+    #   # Raises
+    #       TypeError: if `obj` cannot be serialized.
+    #   """
+    #   # if obj is a serializable Keras class instance
+    #   # e.g. optimizer, layer
+    #   if hasattr(obj, 'get_config'):
+    #     return {'class_name': obj.__class__.__name__,
+    #             'config': obj.get_config()}
+
+    #   # if obj is any numpy type
+    #   if type(obj).__module__ == np.__name__:
+    #       if isinstance(obj, np.ndarray):
+    #           return {'type': type(obj),
+    #                   'value': obj.tolist()}
+    #       else:
+    #           return obj.item()
+
+    #   # misc functions (e.g. loss function)
+    #   if callable(obj):
+    #       return obj.__name__
+
+    #   # if obj is a python 'type'
+    #   if type(obj).__name__ == type.__name__:
+    #       return obj.__name__
+
+    #   raise TypeError('Not JSON Serializable:', obj)
+
+    # import json
+    # j = json.dumps({
+    #   'class_name': model.__class__.__name__,
+    #   'config': model.get_config()
+    # }, default=get_json_type).encode('utf8')
+
+
     model.fit(X_train, y_train, 
       batch_size=batch_size,
       validation_data=(X_val, y_val),
@@ -126,19 +171,21 @@ def main():
   parser.add_argument('-o', '--output', required=True, 
     help='Path to an output dir with tensorboard logs, csv, checkpoints, etc')
  
-
   parser.add_argument('-m', '--mode', default='initial',
     choices=pose_model.PoseModel.MODES,
     help='Training mode, initial or finetuning')
   
-  parser.add_argument('--random-crops', type=bool, default=False,
-    help='Whether the input features contain random crops')
+  parser.add_argument('--random-crops', action='store_true', dest='random_crops',
+    help='Input contains random crops')
+  parser.add_argument('--no-random-crops', action='store_false', dest='random_crops',
+    help='Input DOES NOT contains random crops')
+  parser.set_defaults(random_crops=False)
 
-  parser.add_argument('--top-model-weights',
-    help='Top-model\'s weights for finetuning')
-  parser.add_argument('--finetuning-model-arch', choices=['googlenet', 'inception_resnet_v2'],
+  parser.add_argument('--model-weights',
+    help='Model\'s weights to be loaded finetuning or prediction')
+  parser.add_argument('--finetuning-model-arch', choices=cnn.CNNS,
     help='Model architecture for finetuning')
-  parser.add_argument('--finetuning-model-dataset', choices=['places365', 'imagenet'],
+  parser.add_argument('--finetuning-model-dataset', choices=cnn.DATASETS,
     help='Dataset on which finetuning model was pretrained ')
 
   parser.add_argument('-tm', '--top-model-type', default='regressor',
@@ -147,7 +194,7 @@ def main():
   parser.add_argument('--seq-len', type=int,
     help='If top-model-type is an LSTM, then seq-len has to be specified!')
 
-  parser.add_argument('--loss', default='naive_weighted',
+  parser.add_argument('--loss', default='naive-weighted',
     choices=losses.LOSSES.keys(),
     help='Loss function to use for optimization')
   parser.add_argument('-hp', '--hyperparam-config', required=True,
@@ -168,12 +215,16 @@ def main():
   hyperparam_config = importlib.import_module(args.hyperparam_config)
   
   if ('stateful' in args.top_model_type) or ('standard' in args.top_model_type):
-    
+  
     train_features = np.load(args.train_features[0], mmap_mode='r')
     train_labels = np.load(args.train_labels[0], mmap_mode='r')
 
     val_features = np.load(args.val_features[0], mmap_mode='r')
     val_labels = np.load(args.val_labels[0], mmap_mode='r')
+    
+    ##### test #####
+    #train_labels = train_labels[:,-1,:]
+    #val_labels = val_labels[:,-1,:]
 
   elif args.top_model_type in ['regressor', 'spatial-lstm']:
     train_features_arr = [np.squeeze(np.load(f, mmap_mode='r')) for f in args.train_features]
@@ -220,7 +271,7 @@ def main():
         mode=args.mode,
         finetuning_model_arch=args.finetuning_model_arch,
         finetuning_model_dataset=args.finetuning_model_dataset,
-        topmodel_weights=args.top_model_weights,
+        model_weights=args.model_weights,
         batch_size=args.batch_size,
         seq_len=args.seq_len,
         **hyperparams)
