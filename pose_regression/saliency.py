@@ -3,7 +3,6 @@ from __future__ import print_function
 import numpy as np
 import argparse, os, importlib, itertools
 
-from sklearn.model_selection import train_test_split
 from keras.models import load_model, Sequential, Model
 from keras.callbacks import (
   LearningRateScheduler, 
@@ -19,57 +18,34 @@ import cnn
 
 import keras.backend as K
 
+from vis.visualization import visualize_saliency, overlay
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
 
-def main():
-  parser = argparse.ArgumentParser()
-  
-  parser.add_argument('-i', '--images', nargs='+', required=True, 
-    help='Paths to images to be visualzied with saliency')
+from keras.layers import (Input, Conv2D, 
+  MaxPooling2D, GlobalAveragePooling2D, 
+  Reshape, Dense, Dropout, Lambda, 
+  CuDNNLSTM, Concatenate)
 
-  parser.add_argument('-o', '--output', required=True, 
-    help='Path to an output dir where the saliency maps will be saved')
- 
-  parser.add_argument('-m', '--mode', default='vanilla',
-    choices=['vanilla', 'guided'],
-    help='saliency Map computation mode')
-  
-  parser.add_argument('--smooth', action='store_true', dest='smooth',
-    help='Smooth the gradient')
-  parser.add_argument('--no-smooth', action='store_false', dest='smooth',
-    help='Do not smooth the gradient')
-  parser.set_defaults(smooth=True)
+import scipy.misc
 
-  parser.add_argument('--model-weights',
-    help='Model\'s weights to be used for saliency Map computation')
+def get_smoothed_mask(func, input_seed, stdev_spread=.2, n_samples=50):
+  """
+  Returns a mask that is smoothed with the SmoothGrad method.
 
-  parser.add_argument('-bs', '--batch-size', type=int, default=32,
-    help='Batch size')
+  Args:
+      input_seed: input seed with shape (H, W, 3).
+  """
+  stdev = stdev_spread * (np.max(input_seed) - np.min(input_seed))
+  total_gradients = np.zeros((224, 224)).astype(np.float)
 
-  args = parser.parse_args()
+  for _ in xrange(n_samples):
+    noise = np.random.normal(0, stdev, input_seed.shape)
+    total_gradients += func(input_seed + noise)
 
-  params = args.model_weights.split('/')
+  return total_gradients / n_samples
 
-  top_model_type = params[-4].split('_')[0]
-  model_loss = params[-4].split('_')[1]
-  finetuning_model_arch = params[-4].split('_')[2]
-  finetuning_model_dataset = params[-4].split('_')[3]
-  seq_len = int(params[-4].split('_')[4].split('=')[1])
-
-  hyperparams = dict(map(lambda x: tuple(x.split('=')), params[-3].split(',')))
-
-  print(hyperparams)
-
-
-  custom_objects = {
-    'QuaternionNormalization' : layers.QuaternionNormalization,
-    'QuaternionErrorPoseLoss' : losses.QuaternionErrorPoseLoss,
-    'HomoscedasticLoss' : layers.HomoscedasticLoss,
-    '_dummy_loss' : losses.DummyLoss(),
-    'quaternion_err_weighted_pose_loss' : losses.QuaternionErrorWeightedPoseLoss(gamma=1, beta=463.7)
-  }
-
-
-  from keras.layers import Input, Conv2D, MaxPooling2D, GlobalAveragePooling2D, Reshape, Dense, Dropout, Lambda, CuDNNLSTM, Concatenate
+def build_model(base_weights, top_weights):
 
   input = Input(shape=(224, 224, 3), name='cnn_input')
   
@@ -122,10 +98,120 @@ def main():
   prediction = Lambda(lambda x: x, name='prediction')(quat_norm)
 
   model = Model(inputs=input, outputs=prediction)
-  model.summary()
 
-  model.load_weights(args.model_weights, by_name=True)
-  model.load_weights('pose_regression/cnn/vgg16/hybrid1365/hybrid1365_base.h5', by_name=True)
+  model.load_weights(top_weights, by_name=True)
+  model.load_weights(base_weights, by_name=True)
+
+  print('Built!')
+
+  return model
+
+def main():
+  parser = argparse.ArgumentParser()
+  
+  parser.add_argument('-i', '--images', nargs='+', required=True, 
+    help='Paths to images to be visualzied with saliency')
+
+  parser.add_argument('-o', '--output', required=True, 
+    help='Path to an output dir where the saliency maps will be saved')
+ 
+  parser.add_argument('-m', '--mode', default='vanilla',
+    choices=['vanilla', 'guided'],
+    help='saliency Map computation mode')
+  
+  parser.add_argument('--smooth', action='store_true', dest='smooth',
+    help='Smooth the gradient')
+  parser.add_argument('--no-smooth', action='store_false', dest='smooth',
+    help='Do not smooth the gradient')
+  parser.set_defaults(smooth=True)
+
+  parser.add_argument('--model-weights',
+    help='Model\'s weights to be used for saliency Map computation')
+
+  parser.add_argument('-bs', '--batch-size', type=int, default=32,
+    help='Batch size')
+
+  args = parser.parse_args()
+
+  base_weights = 'pose_regression/cnn/vgg16/hybrid1365/hybrid1365_base.h5'
+  top_weights = args.model_weights
+  
+
+  custom_objects = {
+    'QuaternionNormalization' : layers.QuaternionNormalization
+  }
+
+  images, _ = generate_images_from_filenames(args.images, batch_size=1)
+  images = itertools.takewhile(lambda b: b is not None, images)
+
+  for n, img in enumerate(images):
+
+    output_dir = os.path.join(args.output, '{:05d}_image'.format(n))
+    make_dir(output_dir)
+
+    for modifier in ['relu', 'guided', None]:
+
+
+      figs = [plt.subplots() for _ in xrange(4)]
+
+      titles = {
+        'relu'   : 'ReLU',
+        'guided' : 'Guided-Backpropgation',
+            None : 'Vanilla'
+      }
+      map(lambda (f, ax): f.suptitle(titles[modifier]), figs)
+      map(lambda (f, ax): ax.set_axis_off(), figs)
+
+      filename = os.path.join(output_dir, '{}-{{}}.pdf'.format(modifier))
+
+      def saliency(img):
+        K.clear_session()
+        model = build_model(base_weights, top_weights)
+        return visualize_saliency(model, -1, None, img, 
+                                            backprop_modifier=modifier,
+                                            grad_modifier='absolute',
+                                            custom_objects=custom_objects)
+
+      grads = saliency(img)
+      smoothed_grads = get_smoothed_mask(saliency, img, n_samples=5)
+
+      f1, ax1 = figs[0]
+      ax1.imshow(grads, cmap='jet')
+      f1.suptitle(titles[modifier])
+      f1.savefig(filename.format('plain'), bbox_inches='tight')
+
+      f2, ax2 = figs[1]
+      grad_rgb = np.uint8(cm.jet(grads)[..., :3] * 255)
+      ax2.imshow(overlay(grad_rgb, np.squeeze(img)))
+
+      f2.savefig(filename.format('overlayed'), bbox_inches='tight')
+
+      f3, ax3 = figs[2]
+      ax3.imshow(smoothed_grads, cmap='jet')
+      f3.savefig(filename.format('smoothgrad-plain'), bbox_inches='tight')
+
+      f4, ax4 = figs[3]
+      grad_rgb = np.uint8(cm.jet(smoothed_grads)[..., :3] * 255)
+      ax4.imshow(overlay(grad_rgb, np.squeeze(img)))
+      f4.savefig(filename.format('smoothgrad-overlayed'), bbox_inches='tight')
+
+if __name__ == '__main__':
+  main()
+
+
+
+  # params = args.model_weights.split('/')
+
+  # top_model_type = params[-4].split('_')[0]
+  # model_loss = params[-4].split('_')[1]
+  # finetuning_model_arch = params[-4].split('_')[2]
+  # finetuning_model_dataset = params[-4].split('_')[3]
+  # seq_len = int(params[-4].split('_')[4].split('=')[1])
+
+  # hyperparams = dict(map(lambda x: tuple(x.split('=')), params[-3].split(',')))
+
+  # print(hyperparams)
+  
 
   # top_model = load_model(args.model_weights, custom_objects=custom_objects)
   # top_model_reduced = Model(inputs=top_model.input, outputs=top_model.get_layer('prediction').output)
@@ -155,93 +241,3 @@ def main():
   #   **hyperparams).build()
 
   # trained_model.summary()
-
-
-  from vis.visualization import visualize_saliency_with_losses, overlay
-  from vis.utils import utils as visutils
-  from keras import activations
-  import matplotlib.pyplot as plt
-
-  from vis.backprop_modifiers import get
-  from vis.losses import ActivationMaximization
-
-
-  #layer_idx = visutils.find_layer_idx(model, 'prediction')
-
-  images = '/media/labuser/Storage/arg-00/datasets/7scenes/office/test/seq-06/frame-000732.color.png'
-  images, _ = generate_images_from_filenames([images], batch_size=1)
-  images = itertools.takewhile(lambda b: b is not None, images)
-
-
-  for modifier in ['guided', 'relu']:
-    plt.figure()
-    f, ax = plt.subplots(1, 2)
-    plt.suptitle(modifier)
-
-    if modifier is not None:
-      modifier_fn = get(modifier)
-      model = modifier_fn(model, custom_objects=custom_objects)
-      #model.compile(optimizer='adam', loss='mse')
-
-    layer = model.layers[-1]
-    print(layer)
-    #layer = search_layer(model, 'prediction')
-    loss = [
-        (ActivationMaximization(layer, None), -1)
-    ]
-
-    import tensorflow as tf
-
-    sess = K.get_session()
-    writer = tf.summary.FileWriter('logs', sess.graph)
-    #print sess.run(golden_ratio)
-    writer.close()
-
-
-    for i, img in enumerate(images):
-        grads = visualize_saliency_with_losses(model.inputs[0], loss, img, grad_modifier='absolute')
-        # Lets overlay the heatmap onto original image.    
-        ax[i].imshow(grads, cmap='jet')
-
-    plt.show()
-
-  # model.predict(X_train, y_train, 
-  #   batch_size=batch_size,
-  #   validation_data=(X_val, y_val),
-  #   epochs=epochs,
-  #   callbacks=callbacks,
-  #   verbose=True,
-  #   shuffle=(not stateful)
-  # )
-
-
-  # if 'homoscedastic' in args.loss:
-  #   '''
-  #   Actual homescedastic loss is implemented in the last layer
-  #   as it requires trainable parameters. Therefore, labels are fed with
-  #   dummy data and secondary input is designated for the actual labels.
-  #   Rerouting of the data happens here.
-  #   '''
-  #   train_features = {'main_input' : train_features, 'labels_input' : train_labels}
-  #   train_labels = np.zeros((train_labels.shape[0],))
-
-  #   val_features = {'main_input' : val_features, 'labels_input' : val_labels}
-  #   val_labels = np.zeros((val_labels.shape[0],))
-
-  # stateful = 'stateful' in args.top_model_type
-
-
-
-  # hyperparam_search(model_class, train_features, train_labels,
-  #   val_features, val_labels,
-  #   config=hyperparam_config,
-  #   output=args.output, 
-  #   iters=args.iters,
-  #   epochs=args.epochs,
-  #   save_period=args.save_period,
-  #   batch_size=args.batch_size,
-  #   stateful=stateful,
-  #   seq_len=args.seq_len)
-
-if __name__ == '__main__':
-  main()

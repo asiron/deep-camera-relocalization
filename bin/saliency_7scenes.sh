@@ -19,8 +19,12 @@ echo 'Processing scene:' "${scene_dir}"
 output_dir="${OUTPUT_DIR}"
 mkdir -p "${output_dir}"
 
+IMAGES=(
+  /media/labuser/Storage/arg-00/datasets/7scenes/office/test/seq-06/frame-000732.color.png
+)
+
 python -m "${MODULE}" \
-  --images aaa aaa \
+  --images "${IMAGES[@]}" \
   --output "${output_dir}" \
   --batch-size "${BATCH_SIZE}" \
   --model-weights "${MODEL_WEIGHTS}"
