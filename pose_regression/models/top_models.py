@@ -32,7 +32,7 @@ class Regressor(TopModel):
     dense_1   = Dense(self.kwargs['units'], 
                       activation='relu',
                       kernel_regularizer=l2(self.kwargs['l2']))(input_tensor)
-    #activation_1 = ELU(alpha=1.0)(dense_1)
+
     dropout_1 = Dropout(self.kwargs['dropout'])(dense_1)
     dense_2   = Dense(7)(dropout_1)
     quat_norm = QuaternionNormalization(name='quat_norm')(dense_2)
@@ -49,12 +49,9 @@ class SpatialLSTM(TopModel):
                     activation='relu', 
                     kernel_regularizer=l2(self.kwargs['l2']))(input_tensor)
 
-    #activation_1 = ELU(alpha=1.0)(dense_1)
-
     rect_shape = (64, 32)
 
     dropout_1 = Dropout(self.kwargs['dropout'])(dense_1)
-
 
     reshaped = Reshape(rect_shape)(dropout_1)
     reshaped_reversed = Lambda(lambda x: K.reverse(x, axes=1))(reshaped)
@@ -73,10 +70,6 @@ class SpatialLSTM(TopModel):
       lstm_top_down,   lstm_bottom_up
     ])
 
-    #dropout_1 = Dropout(self.kwargs['dropout'])(merged)
-    #dense_1   = Dense(96, activation='relu', kernel_regularizer=l2(self.kwargs['l2']))(merged)
-    #dropout_1 = Dropout(self.kwargs['dropout'])(dense_1)
-    
     dense_2   = Dense(7)(merged)
     quat_norm = QuaternionNormalization(name='quat_norm')(dense_2)
     return super(SpatialLSTM, self).build(quat_norm)

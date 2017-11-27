@@ -201,7 +201,6 @@ def main():
             backprop_modifier=backprop_mod,
             grad_modifier=grad_mod,
             custom_objects=custom_objects)
-       
 
         tqdm.write('Computing non-SmoothGrad gradients')
         grads = saliency(img)
@@ -222,47 +221,3 @@ def main():
 
 if __name__ == '__main__':
   main()
-
-
-
-  # params = args.model_weights.split('/')
-
-  # top_model_type = params[-4].split('_')[0]
-  # model_loss = params[-4].split('_')[1]
-  # finetuning_model_arch = params[-4].split('_')[2]
-  # finetuning_model_dataset = params[-4].split('_')[3]
-  # seq_len = int(params[-4].split('_')[4].split('=')[1])
-
-  # hyperparams = dict(map(lambda x: tuple(x.split('=')), params[-3].split(',')))
-
-  # tqdm.write(hyperparams)
-  
-
-  # top_model = load_model(args.model_weights, custom_objects=custom_objects)
-  # top_model_reduced = Model(inputs=top_model.input, outputs=top_model.get_layer('prediction').output)
-  # top_model_reduced.name = 'top_model'
-
-  # base_model = cnn.vgg16.vgg16.VGG16(mode='base', dataset='hybrid1365').build()
-  # base_model.name = 'cnn_extractor'
-
-  # base_model.summary()
-  # top_model_reduced.summary()
-
-  # model = Sequential()
-  # model.add(base_model)
-  # model.add(top_model_reduced)
-
-  # model.summary()
-
-  # trained_model = pose_model.PoseModel(
-  #   input_shape=None,
-  #   top_model_type=top_model_type,
-  #   model_loss=model_loss,
-  #   mode='predict',
-  #   finetuning_model_arch=finetuning_model_arch,
-  #   finetuning_model_dataset=finetuning_model_dataset,
-  #   topmodel_weights=args.model_weights,
-  #   seq_len=seq_len,
-  #   **hyperparams).build()
-
-  # trained_model.summary()
