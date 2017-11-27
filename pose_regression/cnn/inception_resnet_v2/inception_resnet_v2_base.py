@@ -59,7 +59,8 @@ def conv2d_bn(x,
               padding='same',
               activation='relu',
               use_bias=False,
-              name=None):
+              name=None,
+              trainable=True):
     """Utility function to apply conv + BN.
 
     # Arguments
@@ -84,14 +85,14 @@ def conv2d_bn(x,
     if not use_bias:
         bn_axis = 1 if K.image_data_format() == 'channels_first' else 3
         bn_name = None if name is None else name + '_bn'
-        x = BatchNormalization(axis=bn_axis, scale=False, name=bn_name)(x)
+        x = BatchNormalization(axis=bn_axis, scale=False, trainable=trainable, name=bn_name)(x)
     if activation is not None:
         ac_name = None if name is None else name + '_ac'
         x = Activation(activation, name=ac_name)(x)
     return x
 
 
-def inception_resnet_block(x, scale, block_type, block_idx, activation='relu'):
+def inception_resnet_block(x, scale, block_type, block_idx, activation='relu', trainable=True):
     """Adds a Inception-ResNet block.
 
     This function builds 3 types of Inception-ResNet blocks mentioned
@@ -127,24 +128,24 @@ def inception_resnet_block(x, scale, block_type, block_idx, activation='relu'):
             `'block17'` or `'block8'`.
     """
     if block_type == 'block35':
-        branch_0 = conv2d_bn(x, 32, 1)
-        branch_1 = conv2d_bn(x, 32, 1)
-        branch_1 = conv2d_bn(branch_1, 32, 3)
-        branch_2 = conv2d_bn(x, 32, 1)
-        branch_2 = conv2d_bn(branch_2, 48, 3)
-        branch_2 = conv2d_bn(branch_2, 64, 3)
+        branch_0 = conv2d_bn(x, 32, 1, trainable=trainable)
+        branch_1 = conv2d_bn(x, 32, 1, trainable=trainable)
+        branch_1 = conv2d_bn(branch_1, 32, 3, trainable=trainable)
+        branch_2 = conv2d_bn(x, 32, 1, trainable=trainable)
+        branch_2 = conv2d_bn(branch_2, 48, 3, trainable=trainable)
+        branch_2 = conv2d_bn(branch_2, 64, 3, trainable=trainable)
         branches = [branch_0, branch_1, branch_2]
     elif block_type == 'block17':
-        branch_0 = conv2d_bn(x, 192, 1)
-        branch_1 = conv2d_bn(x, 128, 1)
-        branch_1 = conv2d_bn(branch_1, 160, [1, 7])
-        branch_1 = conv2d_bn(branch_1, 192, [7, 1])
+        branch_0 = conv2d_bn(x, 192, 1, trainable=trainable)
+        branch_1 = conv2d_bn(x, 128, 1, trainable=trainable)
+        branch_1 = conv2d_bn(branch_1, 160, [1, 7], trainable=trainable)
+        branch_1 = conv2d_bn(branch_1, 192, [7, 1], trainable=trainable)
         branches = [branch_0, branch_1]
     elif block_type == 'block8':
-        branch_0 = conv2d_bn(x, 192, 1)
-        branch_1 = conv2d_bn(x, 192, 1)
-        branch_1 = conv2d_bn(branch_1, 224, [1, 3])
-        branch_1 = conv2d_bn(branch_1, 256, [3, 1])
+        branch_0 = conv2d_bn(x, 192, 1, trainable=trainable)
+        branch_1 = conv2d_bn(x, 192, 1, trainable=trainable)
+        branch_1 = conv2d_bn(branch_1, 224, [1, 3], trainable=trainable)
+        branch_1 = conv2d_bn(branch_1, 256, [3, 1], trainable=trainable)
         branches = [branch_0, branch_1]
     else:
         raise ValueError('Unknown Inception-ResNet block type. '
@@ -159,6 +160,7 @@ def inception_resnet_block(x, scale, block_type, block_idx, activation='relu'):
                    1,
                    activation=None,
                    use_bias=True,
+                   trainable=trainable,
                    name=block_name + '_conv')
 
     x = Lambda(lambda inputs, scale: inputs[0] + inputs[1] * scale,

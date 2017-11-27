@@ -40,6 +40,9 @@ class InceptionResNetV2(object):
         outputs=[base_model.output, injection_layer.output])
 
     elif self.mode == 'finetune':
+
+      trainable = False
+
       top_model_input = Input(
         shape=injection_layer.input_shape[1:], 
         name='last_conv_input')
@@ -50,15 +53,17 @@ class InceptionResNetV2(object):
           x = inception_resnet_block(x,
                                      scale=0.2,
                                      block_type='block8',
-                                     block_idx=block_idx)
+                                     block_idx=block_idx,
+                                     trainable=trainable)
       x = inception_resnet_block(x,
                                  scale=1.,
                                  activation=None,
                                  block_type='block8',
-                                 block_idx=10)
+                                 block_idx=10,
+                                 trainable=trainable)
 
       # Final convolution block: 8 x 8 x 1536
-      x = conv2d_bn(x, 1536, 1, name='conv_7b')
+      x = conv2d_bn(x, 1536, 1, name='conv_7b', trainable=trainable)
       finetune_model_output = GlobalAveragePooling2D()(x)
 
       self.model = Model(inputs=top_model_input, outputs=finetune_model_output)

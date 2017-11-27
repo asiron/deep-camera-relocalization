@@ -83,24 +83,24 @@ def create_googlenet(weights_path, model_output_path):
   inception_4c_pool_proj = Conv2D(64, (1,1), padding='same',activation='relu',name='inception_4c_pool_proj', kernel_regularizer=l2(0.0002))(inception_4c_pool)    
   inception_4c_output = Concatenate(axis=-1,name='inception_4c_output')([inception_4c_1x1,inception_4c_3x3,inception_4c_5x5,inception_4c_pool_proj])
   
-  fintuning_extract_input_shape = inception_4c_output._keras_shape
-  fintuning_extract_input = Input(shape=fintuning_extract_input_shape[1:], name='finetuning_extract_layer')
-
-  inception_4d_1x1 = Conv2D(112, (1,1), padding='same',activation='relu',name='inception_4d_1x1', kernel_regularizer=l2(0.0002))(fintuning_extract_input)    
-  inception_4d_3x3_reduce = Conv2D(144, (1,1), padding='same',activation='relu',name='inception_4d_3x3_reduce', kernel_regularizer=l2(0.0002))(fintuning_extract_input)    
+  inception_4d_1x1 = Conv2D(112, (1,1), padding='same',activation='relu',name='inception_4d_1x1', kernel_regularizer=l2(0.0002))(inception_4c_output)    
+  inception_4d_3x3_reduce = Conv2D(144, (1,1), padding='same',activation='relu',name='inception_4d_3x3_reduce', kernel_regularizer=l2(0.0002))(inception_4c_output)    
   inception_4d_3x3 = Conv2D(288, (3,3), padding='same',activation='relu',name='inception_4d_3x3', kernel_regularizer=l2(0.0002))(inception_4d_3x3_reduce)    
-  inception_4d_5x5_reduce = Conv2D(32, (1,1), padding='same',activation='relu',name='inception_4d_5x5_reduce', kernel_regularizer=l2(0.0002))(fintuning_extract_input)    
+  inception_4d_5x5_reduce = Conv2D(32, (1,1), padding='same',activation='relu',name='inception_4d_5x5_reduce', kernel_regularizer=l2(0.0002))(inception_4c_output)    
   inception_4d_5x5 = Conv2D(64, (5,5), padding='same',activation='relu',name='inception_4d_5x5', kernel_regularizer=l2(0.0002))(inception_4d_5x5_reduce)    
-  inception_4d_pool = MaxPooling2D(pool_size=(3,3),strides=(1,1),padding='same',name='inception_4d_pool')(fintuning_extract_input)    
+  inception_4d_pool = MaxPooling2D(pool_size=(3,3),strides=(1,1),padding='same',name='inception_4d_pool')(inception_4c_output)    
   inception_4d_pool_proj = Conv2D(64, (1,1), padding='same',activation='relu',name='inception_4d_pool_proj', kernel_regularizer=l2(0.0002))(inception_4d_pool)    
   inception_4d_output = Concatenate(axis=-1,name='inception_4d_output')([inception_4d_1x1,inception_4d_3x3,inception_4d_5x5,inception_4d_pool_proj])
   
-  inception_4e_1x1 = Conv2D(256, (1,1), padding='same',activation='relu',name='inception_4e_1x1', kernel_regularizer=l2(0.0002), )(inception_4d_output)    
-  inception_4e_3x3_reduce = Conv2D(160, (1,1), padding='same',activation='relu',name='inception_4e_3x3_reduce', kernel_regularizer=l2(0.0002))(inception_4d_output)    
+  fintuning_extract_input_shape = inception_4d_output._keras_shape
+  fintuning_extract_input = Input(shape=fintuning_extract_input_shape[1:], name='finetuning_extract_layer')
+
+  inception_4e_1x1 = Conv2D(256, (1,1), padding='same',activation='relu',name='inception_4e_1x1', kernel_regularizer=l2(0.0002), )(fintuning_extract_input)    
+  inception_4e_3x3_reduce = Conv2D(160, (1,1), padding='same',activation='relu',name='inception_4e_3x3_reduce', kernel_regularizer=l2(0.0002))(fintuning_extract_input)    
   inception_4e_3x3 = Conv2D(320, (3,3), padding='same',activation='relu',name='inception_4e_3x3', kernel_regularizer=l2(0.0002))(inception_4e_3x3_reduce)    
-  inception_4e_5x5_reduce = Conv2D(32, (1,1), padding='same',activation='relu',name='inception_4e_5x5_reduce', kernel_regularizer=l2(0.0002))(inception_4d_output)   
+  inception_4e_5x5_reduce = Conv2D(32, (1,1), padding='same',activation='relu',name='inception_4e_5x5_reduce', kernel_regularizer=l2(0.0002))(fintuning_extract_input)   
   inception_4e_5x5 = Conv2D(128, (5,5), padding='same',activation='relu',name='inception_4e_5x5', kernel_regularizer=l2(0.0002))(inception_4e_5x5_reduce)    
-  inception_4e_pool = MaxPooling2D(pool_size=(3,3),strides=(1,1),padding='same',name='inception_4e_pool')(inception_4d_output)    
+  inception_4e_pool = MaxPooling2D(pool_size=(3,3),strides=(1,1),padding='same',name='inception_4e_pool')(fintuning_extract_input)    
   inception_4e_pool_proj = Conv2D(128, (1,1), padding='same',activation='relu',name='inception_4e_pool_proj', kernel_regularizer=l2(0.0002))(inception_4e_pool)    
   inception_4e_output = Concatenate(axis=-1,name='inception_4e_output')([inception_4e_1x1,inception_4e_3x3,inception_4e_5x5,inception_4e_pool_proj])
   pool4_3x3_s2 = MaxPooling2D(pool_size=(3,3),strides=(2,2),padding='same',name='pool4_3x3_s2')(inception_4e_output)
@@ -126,7 +126,7 @@ def create_googlenet(weights_path, model_output_path):
   finetuning_output = AveragePooling2D(pool_size=(7, 7), strides=(1,1), padding='valid')(inception_5b_output)
   output = Flatten()(finetuning_output)
 
-  googlenet_base = Model(inputs=input, outputs=inception_4c_output)
+  googlenet_base = Model(inputs=input, outputs=inception_4d_output)
   googlenet_finetuning = Model(inputs=fintuning_extract_input, outputs=output)
   
   weights = np.load(weights_path)

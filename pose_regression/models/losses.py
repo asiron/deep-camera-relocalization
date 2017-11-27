@@ -34,10 +34,18 @@ def quaternion_angle_loss(q1, q2, gamma):
   print(norms.shape, w.shape, angle.shape)
   return angle ** 2 if gamma == 2 else K.abs(angle)
 
+# @scope_wrapper
+# def quaternion_error_loss(q1, q2, L_gamma):
+#   diff = quaternion_mul(q1, quaternion_conj(q2))
+#   return 0.5 * L_gamma(diff[..., :3])
+
 @scope_wrapper
 def quaternion_error_loss(q1, q2, L_gamma):
-  diff = quaternion_mul(q1, quaternion_conj(q2))
-  return 0.5 * L_gamma(diff[..., :3])
+  diff = quaternion_mul(quaternion_conj(q1), q2)
+  xyz, w = diff[..., :-1], tf.expand_dims(diff[..., -1], axis=-1)
+  xyz_norm = tf.expand_dims(tf.norm(xyz, axis=-1), axis=-1)
+  log_diff = xyz * (tf.atan2(xyz_norm, K.abs(w)) / (xyz_norm + K.epsilon()))
+  return L_gamma(log_diff)
 
 class DummyLoss(object):
 
@@ -72,6 +80,7 @@ class PoseLoss(Layer):
 
     pos_true,  pos_pred  = y_true[..., :3], y_pred[..., :3]
     quat_true, quat_pred = y_true[..., 3:], y_pred[..., 3:]
+
     p_loss = self.position_loss(pos_true, pos_pred)
     q_loss = self.quaternion_loss(quat_true, quat_pred)
     p_loss_1 = K.reshape(p_loss, [-1, 1])

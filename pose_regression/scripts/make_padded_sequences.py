@@ -106,11 +106,13 @@ def process_dataset(features_files, labels_files, dataset_type='train',
     
     seq_len = kwargs['seq_len']
     batch_size = kwargs['batch_size']
+    subseq_len = kwargs['subseq_len']
 
     features_seqs, labels_seqs = make_stateful_sequences(
       features, labels, 
       seq_len=seq_len, 
-      batch_size=batch_size)
+      batch_size=batch_size,
+      subseq_len=subseq_len)
 
     save_sequences(features_seqs, output_dir,
       sequence_type=sequence_type,
@@ -169,19 +171,20 @@ def main():
  
   parser.add_argument('--seq-len',    type=int, help='Sequence length for a stateful LSTM')
   parser.add_argument('--batch-size', type=int, help='Batch size for a stateful LSTM')
-  parser.add_argument('--subseq-len', type=int, help='Sub-sequence length for standard LSTM')
+  parser.add_argument('--subseq-len', type=int, help='Sub-sequence length for LSTM')
   parser.add_argument('--step',       type=int, help='Step length for a standard LSTM')
 
-  parser.add_argument('--type', choices=['stateful', 'standard', 'regressor'],
+  parser.add_argument('--type', choices=['stateful', 'standard'],
     help='Output the seqences into Stateful or Stateless LSTM input shape')
 
   args = parser.parse_args()
 
   make_dir(args.output)
 
-  if args.type == 'stateful' and not (args.batch_size and args.seq_len):
-    raise ValueError('Batch size and sequence length have to be specified' + 
-                     'in stateful LSTM mode')
+  if args.type == 'stateful' and not \
+    (args.batch_size and args.seq_len and args.subseq_len):
+    raise ValueError('Batch size, sequence length and subseq-len have to be ' +
+      'specified in stateful LSTM mode')
 
   elif args.type == 'standard' and not (args.subseq_len and args.step):
     raise ValueError('Sub-sequence length and step size has to be specified' + 
@@ -193,6 +196,7 @@ def main():
                   sequence_type=args.type, feature_type=args.feature_type, 
                   output_dir=args.output, **kwargs)
 
+  kwargs['step'] = args.subseq_len
   process_dataset(args.val_features, args.val_labels, dataset_type='val',
                   sequence_type=args.type, feature_type=args.feature_type, 
                   output_dir=args.output, **kwargs)

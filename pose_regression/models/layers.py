@@ -17,11 +17,7 @@ class QuaternionNormalization(Layer):
     return K.concatenate([pos, quat], axis=-1)
   
   def compute_output_shape(self, input_shape):
-    print(input_shape)
     return input_shape
-
-  # def get_config(self):
-  #   return super(QuaternionNormalization, self).get_config()
 
 class HomoscedasticLoss(Layer):
 
@@ -47,7 +43,4 @@ class HomoscedasticLoss(Layer):
   def get_config(self):
     config = {'log_variance_init': self.log_variance_init}
     base_config = super(HomoscedasticLoss, self).get_config()
-    new_config = dict(list(base_config.items()) + list(config.items()))
-    print('NEW CONFIG')
-    print(new_config)
-    return new_config
+    return dict(list(base_config.items()) + list(config.items()))

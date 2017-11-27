@@ -18,17 +18,17 @@ function process_dataset {
 
     meanfile="$dataset/train/meanfiles/224/meanfile.npy"
 
-    python -m "${MODULE}" -p $pattern -m googlenet -d places365 \
-      --meanfile "${meanfile}" --batch-size "${batch_size}" \
-      "${seq}" "${seq}/extracted_features/googlenet/places365"
+    # python -m "${MODULE}" -p $pattern -m googlenet -d places365 \
+    #   --meanfile "${meanfile}" --batch-size "${batch_size}" \
+    #   "${seq}" "${seq}/extracted_features/googlenet/places365"
 
-    python -m "${MODULE}" -p $pattern -m googlenet -d imagenet \
-      --meanfile "${meanfile}" --batch-size "${batch_size}" \
-      "${seq}" "${seq}/extracted_features/googlenet/imagenet"
+    # python -m "${MODULE}" -p $pattern -m googlenet -d imagenet \
+    #   --meanfile "${meanfile}" --batch-size "${batch_size}" \
+    #   "${seq}" "${seq}/extracted_features/googlenet/imagenet"
 
-    python -m "${MODULE}" -p $pattern -m inception_resnet_v2 -d imagenet \
-      --batch-size $(echo "${batch_size}/4" | bc) \
-      "${seq}" "${seq}/extracted_features/inception_resnet_v2/imagenet"
+    # python -m "${MODULE}" -p $pattern -m inception_resnet_v2 -d imagenet \
+    #   --batch-size $(echo "${batch_size}/4" | bc) \
+    #   "${seq}" "${seq}/extracted_features/inception_resnet_v2/imagenet"
 
     python -m "${MODULE}" -p $pattern -m vgg16 -d hybrid1365 \
       --meanfile "${meanfile}" \
@@ -39,9 +39,9 @@ function process_dataset {
 }
 
 process_dataset $DATASET_DIR/office 80
-process_dataset $DATASET_DIR/chess 80
-process_dataset $DATASET_DIR/fire 80
-process_dataset $DATASET_DIR/heads 80
-process_dataset $DATASET_DIR/pumpkin 80
-process_dataset $DATASET_DIR/redkitchen 80
-process_dataset $DATASET_DIR/stairs 80
+# process_dataset $DATASET_DIR/chess 128
+# process_dataset $DATASET_DIR/fire 128
+# process_dataset $DATASET_DIR/heads 128
+# process_dataset $DATASET_DIR/pumpkin 128
+# process_dataset $DATASET_DIR/redkitchen 128
+# process_dataset $DATASET_DIR/stairs 128

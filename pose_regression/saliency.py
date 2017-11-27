@@ -1,33 +1,51 @@
 from __future__ import print_function
 
-import numpy as np
-import argparse, os, importlib, itertools
+from tqdm import tqdm
 
-from keras.models import load_model, Sequential, Model
-from keras.callbacks import (
-  LearningRateScheduler, 
-  ModelCheckpoint,
-  EarlyStopping,
-  ReduceLROnPlateau
-)
+import numpy as np
+import argparse, os, itertools
 
 from models import pose_model, losses, metrics, layers
-from utils import (
-  generate_images_from_filenames, make_dir, search_layer)
+from utils import generate_images_from_filenames, make_dir
 import cnn
 
 import keras.backend as K
 
-from vis.visualization import visualize_saliency, overlay
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 
+from keras.models import Model
 from keras.layers import (Input, Conv2D, 
   MaxPooling2D, GlobalAveragePooling2D, 
   Reshape, Dense, Dropout, Lambda, 
   CuDNNLSTM, Concatenate)
 
-import scipy.misc
+from vis.visualization import get_num_filters
+from vis.utils import utils as utilsvis
+from vis.visualization import (
+  visualize_saliency, 
+  visualize_activation,
+  overlay)
+
+from scipy.misc import imsave
+
+
+def visualize_conv_filters(output_dir, model, layer_name):
+  layer_idx = utilsvis.find_layer_idx(model, layer_name)
+
+  filters = np.arange(get_num_filters(model.layers[layer_idx]))
+  vis_images = []
+
+  for idx in tqdm(filters):
+      img = visualize_activation(model, layer_idx, filter_indices=idx)
+      img = utilsvis.draw_text(img, 'Filter {}'.format(idx))    
+      vis_images.append(img)
+
+  stitched = utilsvis.stitch_images(vis_images, cols=32)    
+
+  path = os.path.join(output_dir, '{}.png')
+  imsave(path, stitched)
+
 
 def get_smoothed_mask(func, input_seed, stdev_spread=.2, n_samples=50):
   """
@@ -37,9 +55,11 @@ def get_smoothed_mask(func, input_seed, stdev_spread=.2, n_samples=50):
       input_seed: input seed with shape (H, W, 3).
   """
   stdev = stdev_spread * (np.max(input_seed) - np.min(input_seed))
-  total_gradients = np.zeros((224, 224)).astype(np.float)
 
-  for _ in xrange(n_samples):
+  gradient_shape = input_seed.shape[-3:-1]
+  total_gradients = np.zeros(gradient_shape).astype(np.float)
+
+  for _ in tqdm(xrange(n_samples), total=n_samples):
     noise = np.random.normal(0, stdev, input_seed.shape)
     total_gradients += func(input_seed + noise)
 
@@ -102,7 +122,7 @@ def build_model(base_weights, top_weights):
   model.load_weights(top_weights, by_name=True)
   model.load_weights(base_weights, by_name=True)
 
-  print('Built!')
+  tqdm.write('Model built!')
 
   return model
 
@@ -144,56 +164,61 @@ def main():
   images, _ = generate_images_from_filenames(args.images, batch_size=1)
   images = itertools.takewhile(lambda b: b is not None, images)
 
+  '''
+  model = build_model(base_weights, top_weights)
+
+  conv_filters_output_dir = os.path.join(args.output, 'conv_filters')
+  make_dir(conv_filters_output_dir)
+
+  visualize_conv_filters(conv_filters_output_dir, model, 'conv5_3')
+
+  grad_mods = ['negate', 'absolute', 'invert', 'relu', 'small_values']
+  backprop_mods = ['relu', 'guided', None]
+  '''
+  grad_mods = ['absolute']
+  backprop_mods = [None, 'guided']
+
   for n, img in enumerate(images):
-
+    tqdm.write('Processing image {:5d}'.format(n))
     output_dir = os.path.join(args.output, '{:05d}_image'.format(n))
-    make_dir(output_dir)
 
-    for modifier in ['relu', 'guided', None]:
+    for grad_mod in grad_mods:
+      tqdm.write('Using grad modifier {}'.format(grad_mod))
 
+      for backprop_mod in backprop_mods:
+        backprop_mod_str = 'vanilla' if backprop_mod is None else backprop_mod
+        tqdm.write('Using backprop modifier {}'.format(backprop_mod_str))
+        
+        path = os.path.join(output_dir, grad_mod, backprop_mod_str)
+        make_dir(path)
 
-      figs = [plt.subplots() for _ in xrange(4)]
+        filename = os.path.join(path, '{}.png')
 
-      titles = {
-        'relu'   : 'ReLU',
-        'guided' : 'Guided-Backpropgation',
-            None : 'Vanilla'
-      }
-      map(lambda (f, ax): f.suptitle(titles[modifier]), figs)
-      map(lambda (f, ax): ax.set_axis_off(), figs)
+        def saliency(img):
+          K.clear_session()
+          model = build_model(base_weights, top_weights)
+          return visualize_saliency(model, -1, None, img, 
+            backprop_modifier=backprop_mod,
+            grad_modifier=grad_mod,
+            custom_objects=custom_objects)
+       
 
-      filename = os.path.join(output_dir, '{}-{{}}.pdf'.format(modifier))
+        tqdm.write('Computing non-SmoothGrad gradients')
+        grads = saliency(img)
+        grads_rgb = np.uint8(cm.jet(grads)[..., :3] * 255)
 
-      def saliency(img):
-        K.clear_session()
-        model = build_model(base_weights, top_weights)
-        return visualize_saliency(model, -1, None, img, 
-                                            backprop_modifier=modifier,
-                                            grad_modifier='absolute',
-                                            custom_objects=custom_objects)
+        tqdm.write('Computing SmoothGrad gradients')
+        smoothed_grads = get_smoothed_mask(saliency, img, n_samples=50)
+        smoothed_grads_rgb = np.uint8(cm.jet(smoothed_grads)[..., :3] * 255)
 
-      grads = saliency(img)
-      smoothed_grads = get_smoothed_mask(saliency, img, n_samples=5)
+        overlaid_grads = overlay(grads_rgb, np.squeeze(img))
+        overlaid_smooothed_grads = overlay(smoothed_grads_rgb, np.squeeze(img))
 
-      f1, ax1 = figs[0]
-      ax1.imshow(grads, cmap='jet')
-      f1.suptitle(titles[modifier])
-      f1.savefig(filename.format('plain'), bbox_inches='tight')
-
-      f2, ax2 = figs[1]
-      grad_rgb = np.uint8(cm.jet(grads)[..., :3] * 255)
-      ax2.imshow(overlay(grad_rgb, np.squeeze(img)))
-
-      f2.savefig(filename.format('overlayed'), bbox_inches='tight')
-
-      f3, ax3 = figs[2]
-      ax3.imshow(smoothed_grads, cmap='jet')
-      f3.savefig(filename.format('smoothgrad-plain'), bbox_inches='tight')
-
-      f4, ax4 = figs[3]
-      grad_rgb = np.uint8(cm.jet(smoothed_grads)[..., :3] * 255)
-      ax4.imshow(overlay(grad_rgb, np.squeeze(img)))
-      f4.savefig(filename.format('smoothgrad-overlayed'), bbox_inches='tight')
+        imsave(filename.format('plain'), grads_rgb)
+        imsave(filename.format('overlaid'), overlaid_grads)
+        imsave(filename.format('smoothgrad-plain'), smoothed_grads_rgb)
+        imsave(filename.format('smoothgrad-overlaid'), overlaid_smooothed_grads)
+  
 
 if __name__ == '__main__':
   main()
@@ -210,7 +235,7 @@ if __name__ == '__main__':
 
   # hyperparams = dict(map(lambda x: tuple(x.split('=')), params[-3].split(',')))
 
-  # print(hyperparams)
+  # tqdm.write(hyperparams)
   
 
   # top_model = load_model(args.model_weights, custom_objects=custom_objects)

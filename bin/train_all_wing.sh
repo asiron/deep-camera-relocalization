@@ -2,7 +2,8 @@
 
 MODULE="pose_regression.train"
 
-DATE=`date +"%m_%d_%Y--%H-%M-%S"`
+#DATE=`date +"%m_%d_%Y--%H-%M-%S"`
+DATE="11_23_2017--09-40-45"
 
 MODE=finetune
 #MODE=initial
@@ -14,41 +15,46 @@ DATASETS="/media/labuser/Storage/arg-00/datasets"
 DATASET_DIR="${DATASETS}/${WING_DATASET}"
 OUTPUT_DIR="/media/labuser/Flight_data1/maciej-cnn-${WING_DATASET}-results-${MODE}"
 
-BATCH_SIZE=20
-SEQ_LEN=5
+SEQ_LEN=2
+SUBSEQ_LEN=-1
 
-HYPERPARAM_CONFIG="pose_regression.configs.hyperparam_finetune"
+# SEQ_LEN=77
+# SUBSEQ_LEN=11
+
+# SEQ_LEN=216
+# SUBSEQ_LEN=18
+
+HYPERPARAMS_MODULES="pose_regression.configs"
 
 TOP_MODEL_TYPES=(
   #stateful-regressor-lstm
   #stateful-lstm
   standard-lstm
-  #regressor
   #spatial-lstm
+  #regressor
 )
 
-ITERS=400
-EPOCHS=100
+ITERS=100
+EPOCHS=500
 
-
-NETS=(
-  #googlenet,imagenet
-  #googlenet,places365
-  #inception_resnet_v2,imagenet
-  vgg16,hybrid1365
+CONFIGS=(
+  #googlenet,imagenet,64,settings.adam-no-modifier
+  #googlenet,places365,64,settings.adam-no-modifier
+  vgg16,hybrid1365,32,settings.adam-no-modifier
+  #inception_resnet_v2,imagenet,20,settings.adam-no-modifier
 )
 
-TOP_MODEL_WEIGHTS=
+MODEL_WEIGHTS=
 
 LOSSES=(
-  #only_position
-  #only_quaternion
-  #quaternion_angle_homoscedastic
-  quaternion_error_homoscedastic
-  #naive_homoscedastic
-  #naive_weighted
-  #quaternion_error_weighted
-  #quaternion_angle_weighted
+  #only-position
+  #only-quaternion
+  #quaternion-angle-homoscedastic
+  quaternion-error-homoscedastic
+  naive-homoscedastic
+  #naive-weighted
+  #quaternion-error-weighted
+  #quaternion-angle-weighted
 )
 
 if [[ "${MODE}" == "finetune" ]]; then
@@ -59,8 +65,8 @@ fi
 
 for i in `seq $ITERS`; do
   for topmodeltype in "${TOP_MODEL_TYPES[@]}"; do
-    for net in "${NETS[@]}"; do 
-      IFS=',' read arch dataset <<< "${net}"
+    for config in "${CONFIGS[@]}"; do 
+      IFS=',' read arch dataset batch_size hyperparams <<< "${config}"          
             
       train_seq_label_dirs=()
       valid_seq_label_dirs=() 
@@ -108,15 +114,16 @@ for i in `seq $ITERS`; do
           --mode "${MODE}" \
           --top-model-type "${topmodeltype}" \
           --loss "${loss}" \
-          --hyperparam-config "${HYPERPARAM_CONFIG}" \
+          --hyperparam-config "${HYPERPARAMS_MODULES}.${hyperparams}" \
           --finetuning-model-arch "${arch}" \
           --finetuning-model-dataset "${dataset}" \
           -i 1 \
           --epochs "${EPOCHS}" \
-          --batch-size "${BATCH_SIZE}" \
+          --batch-size "${batch_size}" \
           --save-period 1 \
           --seq-len "${SEQ_LEN}" \
-          --top-model-weights "${TOP_MODEL_WEIGHTS}" 
+          --subseq-len "${SUBSEQ_LEN}" \
+          --model-weights "${MODEL_WEIGHTS}" 
       done
     done
   done

@@ -11,7 +11,7 @@ OUTPUT_DIR="/media/labuser/Flight_data1/maciej-cnn-7scenes-saliency"
 
 BATCH_SIZE=32
 
-MODEL_WEIGHTS=/media/labuser/Flight_data1/maciej-cnn-7scenes-results-finetune/11_07_2017--21-31-03/office/spatial-lstm_quaternion-error-weighted_vgg16_hybrid1365_seqlen=4/gamma=1,decay=5,beta=178.5,l_rate=1.27e-04,dropout=0.000,l2_regu=0.000,lstm_units=104,build=standard,r_act=tanh/checkpoints/weights.0001-4.3816.hdf5
+MODEL_WEIGHTS=/media/labuser/Flight_data1/maciej-cnn-7scenes-results-finetune/11_08_2017--22-53-15/office/spatial-lstm_quaternion-error-homoscedastic_vgg16_hybrid1365_seqlen=4/gamma=1,decay=5,beta=120.7,l_rate=1.00e-04,dropout=0.00001,l2_regu=0.00001,lstm_units=104,build=standard,r_act=tanh/checkpoints/weights.0034--3.2954.hdf5
 
 scene_dir="${DATASET_DIR}/${scene}"
 echo 'Processing scene:' "${scene_dir}"

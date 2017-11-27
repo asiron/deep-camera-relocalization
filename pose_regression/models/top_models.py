@@ -1,5 +1,5 @@
 from keras.layers import (
-    Dropout, Dense, LSTM, GRU, CuDNNLSTM, Lambda, 
+    Dropout, Dense, LSTM, ELU, GRU, CuDNNGRU, CuDNNLSTM, Lambda, 
     TimeDistributed, Activation, Bidirectional, 
     Reshape, Concatenate, PReLU, BatchNormalization)
 
@@ -27,10 +27,12 @@ class Regressor(TopModel):
     
     # dense_1   = Dense(input_tensor._keras_shape[1],
     #                   activation='relu', 
-    #                   W_regularizer=l2(self.kwargs['l2_regu']))(input_tensor)
+    #                   ))(input_tensor)
                       
-    dense_1   = Dense(input_tensor._keras_shape[1],
-                      activation='relu')(input_tensor)
+    dense_1   = Dense(self.kwargs['units'], 
+                      activation='relu',
+                      kernel_regularizer=l2(self.kwargs['l2']))(input_tensor)
+    #activation_1 = ELU(alpha=1.0)(dense_1)
     dropout_1 = Dropout(self.kwargs['dropout'])(dense_1)
     dense_2   = Dense(7)(dropout_1)
     quat_norm = QuaternionNormalization(name='quat_norm')(dense_2)
@@ -43,34 +45,38 @@ class SpatialLSTM(TopModel):
     
     assert len(input_tensor._keras_shape[1:]) is 1
     
-    # dense_1 = Dense(1024,
-    #                 activation='relu', 
-    #                 kernel_regularizer=l2(self.kwargs['l2_regu']))(input_tensor)
+    dense_1 = Dense(2048,
+                    activation='relu', 
+                    kernel_regularizer=l2(self.kwargs['l2']))(input_tensor)
 
-    dense_1 = Dense(1024, activation='relu')(input_tensor)
+    #activation_1 = ELU(alpha=1.0)(dense_1)
+
+    rect_shape = (64, 32)
 
     dropout_1 = Dropout(self.kwargs['dropout'])(dense_1)
 
-    reshaped = Reshape((32, 32))(dropout_1)
+
+    reshaped = Reshape(rect_shape)(dropout_1)
     reshaped_reversed = Lambda(lambda x: K.reverse(x, axes=1))(reshaped)
 
     transposed = Lambda(lambda x: K.permute_dimensions(x, (0,2,1)))(reshaped)
     transposed_reversed = Lambda(lambda x: K.reverse(x, axes=1))(transposed)
 
-    print(reshaped.shape, transposed.shape)
+    lstm_top_down  = CuDNNLSTM(rect_shape[0], return_sequences=False)(reshaped)
+    lstm_bottom_up = CuDNNLSTM(rect_shape[0], return_sequences=False)(reshaped_reversed)
 
-    lstm_left_right = CuDNNLSTM(32, return_sequences=False)(reshaped)
-    lstm_right_left = CuDNNLSTM(32, return_sequences=False)(reshaped_reversed)
-
-    lstm_top_down = CuDNNLSTM(32, return_sequences=False)(transposed)
-    lstm_bottom_up = CuDNNLSTM(32, return_sequences=False)(transposed_reversed)
+    lstm_left_right = CuDNNLSTM(rect_shape[1], return_sequences=False)(transposed)
+    lstm_right_left = CuDNNLSTM(rect_shape[1], return_sequences=False)(transposed_reversed)
 
     merged = Concatenate()([
-      lstm_left_right, lstm_right_left, lstm_top_down, lstm_bottom_up])
+      lstm_left_right, lstm_right_left, 
+      lstm_top_down,   lstm_bottom_up
+    ])
 
     #dropout_1 = Dropout(self.kwargs['dropout'])(merged)
-
-    #dense_2   = Dense(7, kernel_regularizer=l2(self.kwargs['l2_regu']))(dropout_1)
+    #dense_1   = Dense(96, activation='relu', kernel_regularizer=l2(self.kwargs['l2']))(merged)
+    #dropout_1 = Dropout(self.kwargs['dropout'])(dense_1)
+    
     dense_2   = Dense(7)(merged)
     quat_norm = QuaternionNormalization(name='quat_norm')(dense_2)
     return super(SpatialLSTM, self).build(quat_norm)
@@ -80,20 +86,16 @@ class StatefulLSTM(TopModel):
 
   def build(self, input_tensor):
 
-    lstm_units = self.kwargs['lstm_units']
-    lstm1 = CuDNNLSTM(lstm_units, return_sequences=False, stateful=True)(input_tensor)
-    #lstm2 = CuDNNLSTM(lstm_units//2, return_sequences=False, stateful=True)(lstm1)
-
     assert len(input_tensor.shape[2:]) == 1
 
-    dense_1   = Dense(lstm_units//2,
-                      activation='relu', 
-                      W_regularizer=l2(self.kwargs['l2_regu']))(lstm2)
-    dropout_1 = Dropout(self.kwargs['dropout'])(lstm1)
-    dense_2   = Dense(7)(dropout_1)
-    
-    quat_norm = QuaternionNormalization(name='quat_norm')(dense_2)
-    return super(StatefulLSTM, self).build(quat_norm)
+    lstm_units = self.kwargs['units']
+
+    #dense_1 = TimeDistributed(Dense(1024, activation='relu'))(input_tensor)
+    lstm_1 = CuDNNGRU(512, return_sequences=True, stateful=True)(input_tensor)
+    dense_2   = TimeDistributed(Dense(7))(lstm_1)
+    quat_norm = TimeDistributed(QuaternionNormalization(name='quat_norm'))(dense_2)
+    return TimeDistributed(Lambda(lambda x: x, name='inner_prediction'), name='prediction')(quat_norm)
+
 
 class StandardLSTM(TopModel):
 
@@ -101,71 +103,56 @@ class StandardLSTM(TopModel):
 
     assert len(input_tensor.shape[2:]) == 1
 
-    build_type = self.kwargs['build']
-    lstm_units = int(self.kwargs['lstm_units'])
-    r_act = self.kwargs['r_act']
+    lstm_units = self.kwargs['units']
 
-    if build_type == 'standard':
+    dense_1   = TimeDistributed(Dense(1024))(input_tensor)
 
-        if r_act == 'hard_sigmoid':
-            #bn_1 = TimeDistributed(BatchNormalization(momentum=0.99))(input_tensor)
-            lstm_1 = Bidirectional(
-                              LSTM(lstm_units, return_sequences=True, name='lstm_1'),
-                        merge_mode='concat', name='bi_lstm_1')(input_tensor)
-        elif r_act == 'tanh':
-            lstm_1 = LSTM(lstm_units, recurrent_activation='tanh', return_sequences=True)(input_tensor)
+    merged_rev = TimeDistributed(Lambda(lambda x: K.reverse(x, axes=1)))(dense_1)
 
-        dense_3   = TimeDistributed(Dense(7, name='dense_7'), name='td_dense_7')(lstm_1)
-        quat_norm = TimeDistributed(QuaternionNormalization(name='quat_norm'), name='td_quat_norm')(dense_3)
-        return TimeDistributed(Lambda(lambda x: x, name='prediction_inner'), name='prediction')(quat_norm)
-        
-    elif build_type == 'spatial':
-        dense_1 = TimeDistributed(Dense(1024, activation='relu'))(input_tensor)
-
-        reshaped = TimeDistributed(Reshape((32, 32)))(dense_1)
-        reshaped_reversed = TimeDistributed(Lambda(lambda x: K.reverse(x, axes=1)))(reshaped)
-
-        transposed = TimeDistributed(Lambda(lambda x: K.permute_dimensions(x, (0,2,1))))(reshaped)
-        transposed_reversed = TimeDistributed(Lambda(lambda x: K.reverse(x, axes=1)))(transposed)
-
-        lstm_left_right = TimeDistributed(CuDNNLSTM(32, return_sequences=False))(reshaped)
-        lstm_right_left = TimeDistributed(CuDNNLSTM(32, return_sequences=False))(reshaped_reversed)
-
-        lstm_top_down = TimeDistributed(CuDNNLSTM(32, return_sequences=False))(transposed)
-        lstm_bottom_up = TimeDistributed(CuDNNLSTM(32, return_sequences=False))(transposed_reversed)
-
-        merged = Concatenate()([
-          lstm_left_right, lstm_right_left, lstm_top_down, lstm_bottom_up])
-        
-        if r_act == 'hard_sigmoid':
-            lstm_1 = CuDNNLSTM(lstm_units, return_sequences=True)(merged)
-        elif r_act == 'tanh':
-            lstm_1 = LSTM(lstm_units, recurrent_activation='tanh', return_sequences=True)(merged)
-
-        dense_3   = TimeDistributed(Dense(7))(lstm_1)
-        quat_norm = TimeDistributed(QuaternionNormalization(name='quat_norm'))(dense_3)
-        return TimeDistributed(Lambda(lambda x: x), name='prediction')(quat_norm)
-
-
-class RegressorLSTM(TopModel):
-
-  def build(self, input_tensor):
+    lstm_1 = CuDNNLSTM(512, return_sequences=True)(dense_1)
+    lstm_1_rev = CuDNNLSTM(512, return_sequences=True)(merged_rev)
     
-    reshaped_input_tensor = Lambda(lambda x: tf.squeeze(x))(input_tensor)
+    merged_bidirectional = Concatenate(axis=-1)([lstm_1, lstm_1_rev])
 
-    dense_1   = Dense(int(reshaped_input_tensor.shape[1]),
-                      activation='relu', 
-                      W_regularizer=l2(self.kwargs['l2_regu']))(reshaped_input_tensor)
-    dropout_1 = Dropout(self.kwargs['dropout'])(dense_1)
+    dropout_1 = Dropout(self.kwargs['dropout'])(merged_bidirectional)
 
-    dense_2 = Dense(7)(dropout_1)
+    dense_2   = TimeDistributed(Dense(7))(dropout_1)
+    quat_norm = TimeDistributed(QuaternionNormalization(name='quat_norm'))(dense_2)
+    return TimeDistributed(Lambda(lambda x: x, name='inner_prediction'), name='prediction')(quat_norm)
 
-    dense_2_reshaped = Lambda(lambda x: tf.expand_dims(x, axis=1))(dense_2)
 
-    lstm_units = self.kwargs['lstm_units']
-    lstm1 = LSTM(lstm_units, return_sequences=False, stateful=True)(dense_2_reshaped)
+    '''
+    dense_1 = TimeDistributed(Dense(2048,
+                    activation='relu', 
+                    kernel_regularizer=l2(self.kwargs['l2'])))(merged_bidirectional)
 
-    dense_3 = Dense(7)(lstm1)
-    quat_norm = QuaternionNormalization(name='quat_norm')(dense_3)
+    rect_shape = (64, 32)
 
-    return super(RegressorLSTM, self).build(quat_norm)
+    reshaped = TimeDistributed(Reshape(rect_shape))(dense_1)
+    reshaped_reversed = TimeDistributed(Lambda(lambda x: K.reverse(x, axes=1)))(reshaped)
+
+    transposed = TimeDistributed(Lambda(lambda x: K.permute_dimensions(x, (0,2,1))))(reshaped)
+    transposed_reversed = TimeDistributed(Lambda(lambda x: K.reverse(x, axes=1)))(transposed)
+
+    lstm_top_down  = TimeDistributed(CuDNNLSTM(rect_shape[0], return_sequences=False))(reshaped)
+    lstm_bottom_up = TimeDistributed(CuDNNLSTM(rect_shape[0], return_sequences=False))(reshaped_reversed)
+
+    lstm_left_right = TimeDistributed(CuDNNLSTM(rect_shape[1], return_sequences=False))(transposed)
+    lstm_right_left = TimeDistributed(CuDNNLSTM(rect_shape[1], return_sequences=False))(transposed_reversed)
+
+    merged_spatial = Concatenate(axis=-1)([
+      lstm_left_right, lstm_right_left, 
+      lstm_top_down,   lstm_bottom_up
+    ])
+
+    merged_spatial_rev = TimeDistributed(Lambda(lambda x: K.reverse(x, axes=1)))(merged_spatial)
+
+    lstm_2 = CuDNNLSTM(2*rect_shape[0] + 2*rect_shape[1], return_sequences=True)(merged_spatial)
+    lstm_2_rev = CuDNNLSTM(512, return_sequences=True)(merged_spatial_rev)
+    
+    merged_bidirectional = Concatenate(axis=-1)([lstm_2, lstm_2_rev])
+
+    dense_2   = TimeDistributed(Dense(7))(merged_bidirectional)
+    quat_norm = TimeDistributed(QuaternionNormalization(name='quat_norm'))(dense_2)
+    return TimeDistributed(Lambda(lambda x: x, name='inner_prediction'), name='prediction')(quat_norm)
+    '''

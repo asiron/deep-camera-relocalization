@@ -19,21 +19,21 @@ function process_dataset {
 
       echo -e '\tProcessing sequence:' $seq
 
-      # python -m "${MODULE}" -m googlenet -d places365 \
-      #   --meanfile "${meanfile}" --batch-size "${batch_size}" \
-      #   "${seq}/images" "${seq}/extracted_features/googlenet/places365"
+      python -m "${MODULE}" -m googlenet -d places365 \
+        --meanfile "${meanfile}" --batch-size "${batch_size}" \
+        "${seq}/images" "${seq}/extracted_features/googlenet/places365"
 
-      # python -m "${MODULE}" -m googlenet -d imagenet \
-      #   --meanfile "${meanfile}" --batch-size "${batch_size}" \
-      #   "${seq}/images" "${seq}/extracted_features/googlenet/imagenet"
+      python -m "${MODULE}" -m googlenet -d imagenet \
+        --meanfile "${meanfile}" --batch-size "${batch_size}" \
+        "${seq}/images" "${seq}/extracted_features/googlenet/imagenet"
 
-      # python -m "${MODULE}" -m inception_resnet_v2 -d imagenet \
-      #   --batch-size $(echo "${batch_size}/4" | bc) \
-      #   "${seq}/images" "${seq}/extracted_features/inception_resnet_v2/imagenet"
+      python -m "${MODULE}" -m inception_resnet_v2 -d imagenet \
+        --batch-size $(echo "${batch_size}/6" | bc) \
+        "${seq}/images" "${seq}/extracted_features/inception_resnet_v2/imagenet"
     
       python -m "${MODULE}" -m vgg16 -d hybrid1365 \
         --meanfile "${meanfile}" \
-        --batch-size $(echo "${batch_size}/4" | bc) \
+        --batch-size $(echo "${batch_size}/6" | bc) \
         "${seq}/images" "${seq}/extracted_features/vgg16/hybrid1365"
 
     done
@@ -42,5 +42,5 @@ function process_dataset {
 
 DATASETS="/media/labuser/Storage/arg-00/datasets"
 
-process_dataset "${DATASETS}/wing" 80
-process_dataset "${DATASETS}/wing-5" 80
+process_dataset "${DATASETS}/wing" 128
+process_dataset "${DATASETS}/wing-5" 128

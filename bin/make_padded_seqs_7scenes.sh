@@ -8,24 +8,29 @@ DATASETS="/media/labuser/Storage/arg-00/datasets"
 DATASET_DIR="${DATASETS}/7scenes"
 
 SCENES=(
-  office
-  #redkitchen
+  chess
+  fire
+  heads
+  # pumpkin
+  # office
+  # stairs
+  # redkitchen
 )
 
 FEATURE_TYPES=(
   cnn
-  #finetune
+  finetune
 )
  
 CONFIGS=(
   #stateful,100,20,-1
-  standard,-1,-1,10,1
+  standard,-1,-1,4,1
 )
 
 NETS=(
   #googlenet,imagenet
   #googlenet,places365
-  #inception_resnet_v2,imagenet
+  inception_resnet_v2,imagenet
   vgg16,hybrid1365
 )
 

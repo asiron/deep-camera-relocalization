@@ -2,8 +2,8 @@
 
 MODULE="pose_regression.scripts.make_padded_sequences"
 
-#WING_DATASET=wing
-WING_DATASET=wing-5
+WING_DATASET=wing
+#WING_DATASET=wing-5
 
 DATASETS="/media/labuser/Storage/arg-00/datasets"
 DATASET_DIR="${DATASETS}/${WING_DATASET}"
@@ -14,16 +14,17 @@ FEATURE_TYPES=(
 )
 
 CONFIGS=(
-  ##stateful,83,36,-1
-  ##standard,83,-1,5
-  #stateful,72,30,-1
-  standard,-1,-1,5,1
+  #stateful,83,36,-1
+  #standard,83,-1,5
+  #stateful,77,19,11,-1
+  #stateful,216,16,18,-1
+  standard,-1,-1,2,1
 )
 
 NETS=(
-  #googlenet,imagenet
-  #googlenet,places365
-  #inception_resnet_v2,imagenet
+  googlenet,imagenet
+  googlenet,places365
+  inception_resnet_v2,imagenet
   vgg16,hybrid1365
 )
 

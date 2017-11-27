@@ -30,6 +30,7 @@ def create_vgg16(weights_path, model_output_path):
   conv3_3 = Conv2D(256, (3,3), strides=(1,1), activation='relu', name='conv3_3', padding='same')(conv3_2)
   pool3   = MaxPooling2D(pool_size=(2,2), strides=(2,2), name='pool3', padding='same')(conv3_3)
 
+
   conv4_1 = Conv2D(512, (3,3), strides=(1,1), activation='relu', name='conv4_1', padding='same')(pool3)
   conv4_2 = Conv2D(512, (3,3), strides=(1,1), activation='relu', name='conv4_2', padding='same')(conv4_1)
   conv4_3 = Conv2D(512, (3,3), strides=(1,1), activation='relu', name='conv4_3', padding='same')(conv4_2)

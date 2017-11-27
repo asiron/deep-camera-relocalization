@@ -18,13 +18,14 @@ from utils import (
   load_labels, 
   ExtendedLogger,
   ResetStatesCallback,
-  reshape_to_stateful_input)
+  get_starting_indicies)
 import cnn
 
 import keras.backend as K
 
-def create_callbacks(output='/tmp', prediction_layer=None, 
-  run_identifier=None, l_rate_scheduler=None, save_period=1):
+def create_callbacks(output_dir='/tmp', prediction_layer=None, 
+  run_identifier=None, save_period=1, starting_indicies=None,
+  stateful=False, stateful_reset_interval=None, **hyperparams):
   '''
   Custom logger runs prediction at the end of a training epoch 
   for the validation dataset. In order to retrieve the prediction 
@@ -35,50 +36,36 @@ def create_callbacks(output='/tmp', prediction_layer=None,
   early_stopper = EarlyStopping(monitor='val_loss', min_delta=0.0, 
     patience=7, verbose=1)
 
-  #lrscheduler = LearningRateScheduler(l_rate_scheduler)
+  output_dir = os.path.join(output_dir, run_identifier)
 
-  output = os.path.join(output, run_identifier)
+  logger = ExtendedLogger(prediction_layer, 
+    output_dir=output_dir,
+    starting_indicies=starting_indicies, 
+    stateful=stateful, 
+    stateful_reset_interval=stateful_reset_interval)
 
-  mc_directory  = os.path.join(output, 'checkpoints')
-  tb_directory  = os.path.join(output, 'tensorboard')
-  csv_directory = os.path.join(output, 'csv')
-
-  logger = ExtendedLogger(prediction_layer,
-    csv_dir=csv_directory, tb_dir=tb_directory)
   logger.add_validation_metrics(metrics.PoseMetrics.get_all_metrics())
-
-
+  
+  mc_directory = os.path.join(output_dir, 'checkpoints')
   make_dir(mc_directory)
   checkpoint_pattern = 'weights.{epoch:04d}-{val_loss:.4f}.hdf5'
-  checkpoint_path = os.path.join(mc_directory, checkpoint_pattern)
   model_checkpoint = ModelCheckpoint(
-    checkpoint_path,
+    os.path.join(mc_directory, checkpoint_pattern),
     save_weights_only=False,
     save_best_only=False,
     period=save_period
   )
 
-  reduce_lr = ReduceLROnPlateau(
-    monitor='val_loss',
-    factor=0.8,
-    patience=2,
-    min_lr=1e-6,
-    cooldown=1,
-    verbose=True,
-    epsilon=1e-4)
-
-  return [logger, model_checkpoint, early_stopper, reduce_lr]
-  #return [logger, model_checkpoint, lrscheduler, early_stopper]
-  #return [logger, model_checkpoint, lrscheduler]
+  return [logger, model_checkpoint, early_stopper]
 
 def hyperparam_search(model_class, X_train, y_train, X_val, y_val,
-  config=None, output=None, iters=50, save_period=1, epochs=1000,
-  batch_size=128, stateful=False, seq_len=None):
+  config=None, output_dir=None, iters=50, save_period=1, epochs=1000,
+  batch_size=128, stateful=False, stateful_reset_interval=None, starting_indicies=None):
 
   if not config:
     raise ValueError('Hyperparam config has to be specified!')
 
-  if not output:
+  if not output_dir:
     raise ValueError('Output has to be specified!')
 
   for _ in xrange(iters):
@@ -87,64 +74,30 @@ def hyperparam_search(model_class, X_train, y_train, X_val, y_val,
     hyperparams = {var: gen() for var, gen in hyperparameter_space.items()}
     hyperparam_desc = config.desc.format(**hyperparams)
 
-    l_rate_scheduler = config.make_l_rate_scheduler(
-      hyperparams['l_rate'],
-      hyperparams['decay'])
-
-    callbacks = create_callbacks(output=output, 
+    callbacks = create_callbacks(output_dir=output_dir, 
       prediction_layer='prediction', 
       run_identifier=hyperparam_desc,
-      l_rate_scheduler=l_rate_scheduler,
-      save_period=save_period
+      save_period=save_period,
+      stateful=stateful,
+      stateful_reset_interval=stateful_reset_interval,
+      starting_indicies=starting_indicies
     )
 
     if stateful:
-      callbacks.append(ResetStatesCallback(seq_len=seq_len))
+      callbacks.append(ResetStatesCallback(interval=stateful_reset_interval))
+
+    lr_modifier = hyperparams['lr_modifier']
+    lr_modifier_callback = lr_modifier(**hyperparams)
+    if lr_modifier_callback is not None:
+      callbacks.append(lr_modifier_callback)
 
     model = model_class(**hyperparams).build()
     model.summary()
 
-    #K.set_learning_phase(1)
-
-    # def get_json_type(obj):
-    #   """Serialize any object to a JSON-serializable structure.
-    #   # Arguments
-    #       obj: the object to serialize
-    #   # Returns
-    #       JSON-serializable structure representing `obj`.
-    #   # Raises
-    #       TypeError: if `obj` cannot be serialized.
-    #   """
-    #   # if obj is a serializable Keras class instance
-    #   # e.g. optimizer, layer
-    #   if hasattr(obj, 'get_config'):
-    #     return {'class_name': obj.__class__.__name__,
-    #             'config': obj.get_config()}
-
-    #   # if obj is any numpy type
-    #   if type(obj).__module__ == np.__name__:
-    #       if isinstance(obj, np.ndarray):
-    #           return {'type': type(obj),
-    #                   'value': obj.tolist()}
-    #       else:
-    #           return obj.item()
-
-    #   # misc functions (e.g. loss function)
-    #   if callable(obj):
-    #       return obj.__name__
-
-    #   # if obj is a python 'type'
-    #   if type(obj).__name__ == type.__name__:
-    #       return obj.__name__
-
-    #   raise TypeError('Not JSON Serializable:', obj)
-
-    # import json
-    # j = json.dumps({
-    #   'class_name': model.__class__.__name__,
-    #   'config': model.get_config()
-    # }, default=get_json_type).encode('utf8')
-
+    print('Hyper-parameters:')
+    print(hyperparams)
+    print('Run-identifier:')
+    print(hyperparam_desc)
 
     model.fit(X_train, y_train, 
       batch_size=batch_size,
@@ -168,18 +121,12 @@ def main():
   parser.add_argument('-vf', '--val-features', nargs='+', required=True,
     help='Path to a numpy array with validation features')
 
-  parser.add_argument('-o', '--output', required=True, 
+  parser.add_argument('-o', '--output-dir', required=True, 
     help='Path to an output dir with tensorboard logs, csv, checkpoints, etc')
  
   parser.add_argument('-m', '--mode', default='initial',
     choices=pose_model.PoseModel.MODES,
     help='Training mode, initial or finetuning')
-  
-  parser.add_argument('--random-crops', action='store_true', dest='random_crops',
-    help='Input contains random crops')
-  parser.add_argument('--no-random-crops', action='store_false', dest='random_crops',
-    help='Input DOES NOT contains random crops')
-  parser.set_defaults(random_crops=False)
 
   parser.add_argument('--model-weights',
     help='Model\'s weights to be loaded finetuning or prediction')
@@ -193,6 +140,10 @@ def main():
     help='Top model to use for regression')
   parser.add_argument('--seq-len', type=int,
     help='If top-model-type is an LSTM, then seq-len has to be specified!')
+
+  parser.add_argument('--subseq-len', type=int,
+    help='If top-model-type is a stateful LSTM, then subseq-len'
+      'has to be specified!')
 
   parser.add_argument('--loss', default='naive-weighted',
     choices=losses.LOSSES.keys(),
@@ -214,17 +165,15 @@ def main():
 
   hyperparam_config = importlib.import_module(args.hyperparam_config)
   
+  starting_indicies = None
+
   if ('stateful' in args.top_model_type) or ('standard' in args.top_model_type):
   
     train_features = np.load(args.train_features[0], mmap_mode='r')
     train_labels = np.load(args.train_labels[0], mmap_mode='r')
 
     val_features = np.load(args.val_features[0], mmap_mode='r')
-    val_labels = np.load(args.val_labels[0], mmap_mode='r')
-    
-    ##### test #####
-    #train_labels = train_labels[:,-1,:]
-    #val_labels = val_labels[:,-1,:]
+    val_labels = np.load(args.val_labels[0], mmap_mode='r') 
 
   elif args.top_model_type in ['regressor', 'spatial-lstm']:
     train_features_arr = [np.squeeze(np.load(f, mmap_mode='r')) for f in args.train_features]
@@ -233,19 +182,13 @@ def main():
     val_features_arr = [np.squeeze(np.load(f, mmap_mode='r')) for f in args.val_features]
     val_labels_arr   = [load_labels(l) for l in args.val_labels]
 
+    valid_start_indicies = get_starting_indicies(val_features_arr)
+    starting_indicies = {'valid' : valid_start_indicies}
+
+    train_features = np.concatenate(train_features_arr)
     train_labels = np.concatenate(train_labels_arr)
     val_features = np.concatenate(val_features_arr)
     val_labels   = np.concatenate(val_labels_arr)
-
-    if args.random_crops:
-      print('Random crops enabled!')
-      crops = train_features_arr[0].shape[1]
-      feature_shape = train_features_arr[0].shape[2:]
-      train_features = train_features_arr[0].reshape((-1,) + feature_shape)
-      train_labels = np.repeat(train_labels, crops, axis=0)
-    else:
-      print('Random crops disabled!')
-      train_features = np.concatenate(train_features_arr)
 
   print(train_features.shape, train_labels.shape)
   print(val_features.shape, val_labels.shape)
@@ -260,6 +203,7 @@ def main():
         mode=args.mode,
         batch_size=args.batch_size,
         seq_len=args.seq_len,
+        subseq_len=args.subseq_len,
         **hyperparams)
 
   elif args.mode == 'finetune':
@@ -274,6 +218,7 @@ def main():
         model_weights=args.model_weights,
         batch_size=args.batch_size,
         seq_len=args.seq_len,
+        subseq_len=args.subseq_len,
         **hyperparams)
 
   if 'homoscedastic' in args.loss:
@@ -289,18 +234,24 @@ def main():
     val_features = {'main_input' : val_features, 'labels_input' : val_labels}
     val_labels = np.zeros((val_labels.shape[0],))
 
-  stateful = 'stateful' in args.top_model_type
+  stateful = False
+  stateful_reset_interval = -1
+  if 'stateful' in args.top_model_type:
+    stateful = True
+    stateful_reset_interval = args.seq_len // args.subseq_len
+    print('Stateful reset interval is:', stateful_reset_interval)
 
   hyperparam_search(model_class, train_features, train_labels,
     val_features, val_labels,
     config=hyperparam_config,
-    output=args.output, 
+    output_dir=args.output_dir,
     iters=args.iters,
     epochs=args.epochs,
     save_period=args.save_period,
     batch_size=args.batch_size,
     stateful=stateful,
-    seq_len=args.seq_len)
+    stateful_reset_interval=stateful_reset_interval,
+    starting_indicies=starting_indicies)
 
 if __name__ == '__main__':
   main()

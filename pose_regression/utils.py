@@ -1,10 +1,12 @@
 from __future__ import print_function
 
+import quaternion
+
 import numpy as np
 import matplotlib.pyplot as plt
 
 from tqdm import tqdm
-from itertools import izip
+from itertools import izip, tee
 
 import time, contextlib, itertools, os, re
 
@@ -25,6 +27,11 @@ def timeit(name):
   yield
   elapsed_time = time.time() - start_time
   tqdm.write('[{}] finished in {} ms'.format(name, int(elapsed_time * 1000)))
+
+def pairwise(iterable):
+  a, b = tee(iterable)
+  next(b, None)
+  return izip(a, b)
 
 def grouper(iterable, n, fillvalue=None):
   "Collect data into fixed-length chunks or blocks"
@@ -96,14 +103,16 @@ def split_and_pad(sequence, seq_len):
   full_subseqs = []
   if full_subseq_count != 0:
     full_subseqs = np.split(sequence[:last_full_subseq_ind], full_subseq_count)
-  
+
   last_subseq = sequence[last_full_subseq_ind:]
   if len(last_subseq):
     padding_len = seq_len - len(last_subseq)
-    padding = sequence[-padding_len-1:-1][::-1]
-    last_subseq_padded = np.concatenate([last_subseq, padding], axis=0)
+    padding_begin = int(np.floor(padding_len / 2.0))
+    padding_end   = int(np.ceil(padding_len  / 2.0))
+    padding_axes = ((padding_begin, padding_end),) + ((0,0),) * (sequence.ndim-1)
+    last_subseq_padded = np.lib.pad(last_subseq, padding_axes, 'reflect')
     full_subseqs.append(last_subseq_padded)
-  
+
   full_subseqs = np.stack(full_subseqs, axis=0)
   assert len(full_subseqs) is int(np.ceil(len(sequence) / float(seq_len)))
 
@@ -115,35 +124,46 @@ def pad_sequences(features_arr, labels_arr, seq_len):
   gen = itertools.izip(features_arr, labels_arr)
   for f_seq, l_seq in tqdm(gen, total=total):
     padded_feature_seqs = split_and_pad(f_seq, seq_len)
-    padded_label_seqs = split_and_pad(l_seq, seq_len)
+    padded_label_seqs   = split_and_pad(l_seq, seq_len)
 
     padded_feature_arr.append(padded_feature_seqs)
     padded_label_arr.append(padded_label_seqs)
+
+    print(padded_feature_seqs.shape, padded_label_seqs.shape)
 
   padded_feature_arr = np.concatenate(padded_feature_arr, axis=0)
   padded_label_arr = np.concatenate(padded_label_arr, axis=0)
 
   return padded_feature_arr, padded_label_arr
 
-def reshape_to_stateful_input(dataset, batch_size):
+def reshape_to_stateful_input(dataset, batch_size, subseq_len=1):
+
+  print(len(dataset), batch_size, subseq_len)
 
   assert len(dataset) % batch_size == 0
+  assert dataset.shape[1] % subseq_len == 0
 
-  splits = len(dataset) / batch_size
-  
-  feature_dims = tuple(range(2, dataset.ndim))
+  splits = len(dataset) / batch_size  
   feature_shape = dataset.shape[2:]
 
-  reshape_dims = (-1, 1) + feature_shape
-  permute_axes = (1, 0) + feature_dims
+  dataset = dataset.reshape((len(dataset), -1, subseq_len) + feature_shape)
+
+  reshape_dims = (-1, subseq_len) + feature_shape
+  permute_axes = (1, 0) + tuple(range(2, dataset.ndim))
 
   transposed = [a.transpose(permute_axes) for a in np.split(dataset, splits)]
   return np.concatenate(transposed).reshape(reshape_dims)
 
-def make_stateful_sequences(features, labels, seq_len=None, batch_size=None):
-  features, labels = pad_sequences(features, labels, seq_len)
-  features = np.squeeze(reshape_to_stateful_input(features, batch_size))
-  labels = np.squeeze(reshape_to_stateful_input(labels, batch_size))
+def make_stateful_sequences(features, labels, 
+                            seq_len=None, batch_size=None, subseq_len=None):
+  features, labels = pad_sequences(features, labels, seq_len)\
+
+  perm = np.random.permutation(len(features))
+  features = features[perm]
+  labels = labels[perm]
+  print('Padded shapes', features.shape, labels.shape)
+  features = np.squeeze(reshape_to_stateful_input(features, batch_size, subseq_len=subseq_len))
+  labels = np.squeeze(reshape_to_stateful_input(labels, batch_size, subseq_len=subseq_len))
   return features, labels
 
 def make_standard_sequences(Xs, Ys, 
@@ -226,18 +246,21 @@ def concatenate_mmaps(mmaps, filename, func=lambda x: x):
 
   del merged_mmap
 
+def get_starting_indicies(arrays):
+  lens = [len(x) for x in arrays]
+  return np.insert(np.cumsum(lens), 0, 0)
 
 class ResetStatesCallback(Callback):
   
-  def __init__(self, seq_len=None):
-    if seq_len is None:
-      raise ValueError('Sequence length (seq_len) has to be specified!')
+  def __init__(self, interval=None):
+    if interval is None:
+      raise ValueError('Interval has to be specified!')
 
     self.counter = 0
-    self.seq_len = seq_len
+    self.interval = interval
 
   def on_batch_begin(self, batch, logs={}):
-    if self.counter % self.seq_len == 0:
+    if self.counter % self.interval == 0:
       self.model.reset_states()
       print("Reseting Model's internal states...")
     self.counter += 1
@@ -246,23 +269,29 @@ class ExtendedLogger(Callback):
 
   val_data_metrics = {}
 
-  def __init__(self, prediction_layer, csv_dir='./csv', tb_dir='./tensorboard',
-    stateful=False, seq_len=None):
+  def __init__(self, prediction_layer, output_dir='./tmp',
+    stateful=False, stateful_reset_interval=None, starting_indicies=None):
 
-    if stateful and seq_len is None:
+    if stateful and stateful_reset_interval is None:
       raise ValueError('If model is stateful, then seq-len has to be defined!')
 
     super(ExtendedLogger, self).__init__()
-    make_dir(csv_dir)
-    make_dir(tb_dir)
-    self.csv_dir = csv_dir
+    
+    self.csv_dir  = os.path.join(output_dir, 'csv')
+    self.tb_dir   = os.path.join(output_dir, 'tensorboard')
+    self.pred_dir = os.path.join(output_dir, 'predictions')
+    self.plot_dir = os.path.join(output_dir, 'plots')
+
+    make_dir(self.csv_dir)
+    make_dir(self.tb_dir)
+    make_dir(self.plot_dir)
+    make_dir(self.pred_dir)
+
     self.stateful = stateful
-    self.seq_len = seq_len
-    self.csv_logger = CSVLogger(os.path.join(csv_dir, 'run.csv'))
-    self.tensorboard = TensorBoard(log_dir=tb_dir, 
-      write_graph=True) 
-      #write_grads=True,
-      #histogram_freq=30)
+    self.stateful_reset_interval = stateful_reset_interval
+    self.starting_indicies = starting_indicies
+    self.csv_logger = CSVLogger(os.path.join(self.csv_dir, 'run.csv'))
+    self.tensorboard = TensorBoard(log_dir=self.tb_dir, write_graph=True) 
     self.prediction_layer = prediction_layer
 
   def set_params(self, params):
@@ -314,7 +343,7 @@ class ExtendedLogger(Callback):
 
       callback = None
       if self.stateful:
-        callback = ResetStatesCallback(seq_len=self.seq_len)
+        callback = ResetStatesCallback(interval=self.stateful_reset_interval)
         callback.model = self.prediction_model
 
       y_pred = self.prediction_model.predict(val_data[:-1], 
@@ -327,7 +356,8 @@ class ExtendedLogger(Callback):
       y_true = y_true.reshape((-1, 7))
       y_pred = y_pred.reshape((-1, 7))
 
-      self.add_error_histograms(epoch, y_true, y_pred)
+      self.save_error_histograms(epoch, y_true, y_pred)
+      self.save_topview_trajectories(epoch, y_true, y_pred)
 
       new_logs = {name: np.array(metric(y_true, y_pred))
         for name, metric in self.val_data_metrics.items()}
@@ -364,11 +394,64 @@ class ExtendedLogger(Callback):
 
   def write_prediction(self, epoch, y_true, y_pred):
     filename = '{:04d}_predictions.npy'.format(epoch)
-    filename = os.path.join(self.csv_dir, filename)
+    filename = os.path.join(self.pred_dir, filename)
     arr = {'y_pred': y_pred, 'y_true': y_true}
     np.save(filename, arr)
 
-  def add_error_histograms(self, epoch, y_true, y_pred):
+  def save_topview_trajectories(self, epoch, y_true, y_pred, max_segment=1000):
+   
+    if self.starting_indicies is None:
+      self.starting_indicies = {'valid' : range(0, 4000, 1000) + [4000]}
+
+    for begin, end in pairwise(self.starting_indicies['valid']):
+
+      diff = end - begin
+      if diff > max_segment:
+        subindicies = range(begin, end, max_segment) + [end]
+        for b, e in pairwise(subindicies):
+          self.save_trajectory(epoch, y_true, y_pred, b, e)
+
+      self.save_trajectory(epoch, y_true, y_pred, begin, end)
+
+
+  def save_trajectory(self, epoch, y_true, y_pred, begin, end):
+    true_xy, pred_xy = y_true[begin:end, :2], y_pred[begin:end, :2]
+    
+    true_q = quaternion.as_quat_array(y_true[begin:end, [6,3,4,5]])
+    true_q = quaternion.as_euler_angles(true_q)[1]
+
+    pred_q = quaternion.as_quat_array(y_pred[begin:end, [6,3,4,5]])
+    pred_q = quaternion.as_euler_angles(pred_q)[1]
+
+    plt.clf()
+
+    plt.plot(true_xy[:, 0], true_xy[:, 1], 'g-')
+    plt.plot(pred_xy[:, 0], pred_xy[:, 1], 'r-')
+
+    for ((x1, y1), (x2, y2)) in zip(true_xy, pred_xy):
+      plt.plot([x1, x2], [y1, y2], 
+               color='k', linestyle='-', 
+               linewidth=0.3, alpha=0.2)
+
+
+    plt.grid(True)
+    plt.xlabel('x [m]')
+    plt.ylabel('y [m]')
+    plt.title('Top-down view of trajectory')
+    plt.axis('equal')
+
+    x_range = (np.min(true_xy[:, 0])-.2, np.max(true_xy[:, 0])+.2)
+    y_range = (np.min(true_xy[:, 1])-.2, np.max(true_xy[:, 1])+.2)
+
+    plt.xlim(x_range)
+    plt.ylim(y_range)
+
+    filename = 'epoch={epoch:04d}_begin={begin:04d}_end={end:04d}_trajectory.pdf' \
+      .format(epoch=epoch, begin=begin, end=end)
+    filename = os.path.join(self.plot_dir, filename)
+    plt.savefig(filename)
+
+  def save_error_histograms(self, epoch, y_true, y_pred):
     pos_errors = PoseMetrics.abs_errors_position(y_true, y_pred)
     pos_errors = np.sort(pos_errors)
 
@@ -394,5 +477,5 @@ class ExtendedLogger(Callback):
     plt.xlim(0, 70)
 
     filename = '{:04d}_cdf.pdf'.format(epoch)
-    filename = os.path.join(self.csv_dir, filename)
+    filename = os.path.join(self.plot_dir, filename)
     plt.savefig(filename)
